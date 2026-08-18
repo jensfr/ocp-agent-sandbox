@@ -1,0 +1,58 @@
+# Reference Prow workflow definition for agent-sandbox + OpenShell e2e testing.
+# This file is NOT functional here — it documents the workflow that will be
+# submitted to the openshift/release step registry.
+#
+# The workflow chains on top of existing OSC CI steps:
+#   1. OSC operator install (existing step)
+#   2. KataConfig creation (existing step)
+#   3. Agent sandbox install (NEW - install-agent-sandbox.sh)
+#   4. OpenShell gateway install (NEW - install-openshell.sh)
+#   5. BATS tests (NEW - run-tests.sh)
+#   6. Teardown (NEW - teardown.sh)
+
+workflow:
+  as: sandboxed-containers-operator-e2e-agent-sandbox
+  documentation: >-
+    End-to-end tests for agent sandbox with OpenShell gateway on kata containers.
+    Requires OSC operator and KataConfig to be deployed by preceding steps.
+  steps:
+    pre:
+      # Existing OSC CI steps (already in openshift/release step registry)
+      - ref: sandboxed-containers-operator-install
+      - ref: sandboxed-containers-operator-kataconfig
+
+      # New steps (to be added to step registry)
+      - ref: sandboxed-containers-operator-agent-sandbox-install
+      - ref: sandboxed-containers-operator-openshell-install
+
+    test:
+      - ref: sandboxed-containers-operator-agent-sandbox-test
+
+    post:
+      - ref: sandboxed-containers-operator-agent-sandbox-teardown
+
+# Step registry refs (each maps to a script in this directory):
+#
+# sandboxed-containers-operator-agent-sandbox-install:
+#   command: install-agent-sandbox.sh
+#   env:
+#     - name: AGENT_SANDBOX_IMAGE_TAG
+#       default: ""
+#     - name: AGENT_SANDBOX_IMAGE_REPO
+#       default: registry.k8s.io/agent-sandbox/agent-sandbox-controller
+#
+# sandboxed-containers-operator-openshell-install:
+#   command: install-openshell.sh
+#   env:
+#     - name: OPENSHELL_IMAGE
+#       default: ""
+#     - name: OPENSHELL_IMAGE_TAG
+#       default: latest
+#     - name: OPENSHELL_LOCAL_STORAGE
+#       default: "false"
+#
+# sandboxed-containers-operator-agent-sandbox-test:
+#   command: run-tests.sh
+#
+# sandboxed-containers-operator-agent-sandbox-teardown:
+#   command: teardown.sh

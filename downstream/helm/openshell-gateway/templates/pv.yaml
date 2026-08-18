@@ -1,0 +1,30 @@
+{{- if .Values.storage.localPath.enabled }}
+{{- range $i := until (int .Values.storage.localPath.pvCount) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: openshell-workspace-{{ $i }}
+  labels:
+    {{- include "openshell-gateway.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: workspace-storage
+spec:
+  capacity:
+    storage: {{ $.Values.storage.localPath.pvSize }}
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Delete
+  storageClassName: {{ $.Values.storage.localPath.storageClassName }}
+  hostPath:
+    path: {{ $.Values.storage.localPath.basePath }}/pv-{{ $i }}
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/os
+              operator: In
+              values:
+                - linux
+{{- end }}
+{{- end }}

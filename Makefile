@@ -134,6 +134,10 @@ toc-update:
 toc-verify:
 	./dev/tools/verify-toc
 
+.PHONY: test-downstream-openshell
+test-downstream-openshell:
+	$(MAKE) -C downstream test-openshell-kata
+
 .PHONY: clean
 clean:
 	rm -rf dev/tools/tmp

@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openshell-gateway-config
+  namespace: {{ include "openshell-gateway.namespace" . }}
+  labels:
+    {{- include "openshell-gateway.labels" . | nindent 4 }}
+data:
+  config.toml: |
+    default_runtime_class_name = "{{ .Values.gateway.defaultRuntimeClassName }}"
+    {{- range $key, $value := .Values.gateway.configExtra }}
+    {{ $key }} = {{ $value | quote }}
+    {{- end }}

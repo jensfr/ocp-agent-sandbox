@@ -1,0 +1,60 @@
+namespace:
+  create: true
+  name: openshell
+
+image:
+  repository: ""  # required: OpenShell gateway image
+  tag: ""         # required
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+gateway:
+  defaultRuntimeClassName: kata
+  # Additional gateway TOML config keys (key = "value" pairs)
+  configExtra: {}
+
+scc:
+  create: true
+  name: openshell-kata
+  capabilities:
+    - SYS_ADMIN
+    - NET_ADMIN
+    - SYS_PTRACE
+    - SYSLOG
+
+serviceAccounts:
+  gateway:
+    create: true
+    name: openshell
+  sandbox:
+    create: true
+    name: openshell-sandbox
+
+storage:
+  # For bare-metal clusters without dynamic provisioning
+  localPath:
+    enabled: false
+    basePath: /var/openshell/workspaces
+    pvCount: 10
+    pvSize: 10Gi
+    storageClassName: openshell-local
+    selinuxContext: "system_u:object_r:container_file_t:s0"
+
+resources: {}
+  # limits:
+  #   cpu: 500m
+  #   memory: 256Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+podSecurityContext: null
+
+containerSecurityContext: null

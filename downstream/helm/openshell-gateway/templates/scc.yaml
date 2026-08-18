@@ -1,0 +1,42 @@
+{{- if .Values.scc.create }}
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: {{ .Values.scc.name }}
+  labels:
+    {{- include "openshell-gateway.labels" . | nindent 4 }}
+allowPrivilegedContainer: false
+allowHostNetwork: false
+allowHostPorts: false
+allowHostPID: false
+allowHostIPC: false
+readOnlyRootFilesystem: false
+requiredDropCapabilities:
+  - KILL
+  - MKNOD
+  - SETUID
+  - SETGID
+defaultAddCapabilities: []
+allowedCapabilities:
+  {{- range .Values.scc.capabilities }}
+  - {{ . }}
+  {{- end }}
+runAsUser:
+  type: RunAsAny
+seLinuxContext:
+  type: MustRunAs
+fsGroup:
+  type: RunAsAny
+supplementalGroups:
+  type: RunAsAny
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - persistentVolumeClaim
+  - projected
+  - secret
+users:
+  - system:serviceaccount:{{ include "openshell-gateway.namespace" . }}:{{ .Values.serviceAccounts.gateway.name }}
+  - system:serviceaccount:{{ include "openshell-gateway.namespace" . }}:{{ .Values.serviceAccounts.sandbox.name }}
+{{- end }}

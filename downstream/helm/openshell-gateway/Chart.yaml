@@ -1,0 +1,15 @@
+apiVersion: v2
+name: openshell-gateway
+description: OpenShell gateway for Agent Sandbox on OpenShift with kata containers
+type: application
+version: 0.1.0
+keywords:
+  - openshell
+  - agent-sandbox
+  - kata
+  - openshift
+home: https://github.com/kubernetes-sigs/agent-sandbox
+sources:
+  - https://github.com/kubernetes-sigs/agent-sandbox
+maintainers:
+  - name: Red Hat OSC CI
