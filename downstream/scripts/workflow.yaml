@@ -8,7 +8,8 @@
 #   3. Agent sandbox install (NEW - install-agent-sandbox.sh)
 #   4. OpenShell gateway install (NEW - install-openshell.sh)
 #   5. BATS tests (NEW - run-tests.sh)
-#   6. Teardown (NEW - teardown.sh)
+#   6. Upstream OpenShell Rust e2e tests (NEW - run-openshell-e2e.sh)
+#   7. Teardown (NEW - teardown.sh)
 
 workflow:
   as: sandboxed-containers-operator-e2e-agent-sandbox
@@ -27,6 +28,7 @@ workflow:
 
     test:
       - ref: sandboxed-containers-operator-agent-sandbox-test
+      - ref: sandboxed-containers-operator-openshell-e2e
 
     post:
       - ref: sandboxed-containers-operator-agent-sandbox-teardown
@@ -53,6 +55,18 @@ workflow:
 #
 # sandboxed-containers-operator-agent-sandbox-test:
 #   command: run-tests.sh
+#
+# sandboxed-containers-operator-openshell-e2e:
+#   command: run-openshell-e2e.sh
+#   env:
+#     - name: OPENSHELL_REPO
+#       default: /Users/jfreiman/code/OpenShell
+#     - name: OPENSHELL_BIN
+#       default: /opt/homebrew/bin/openshell
+#     - name: OPENSHELL_E2E_FEATURES
+#       default: e2e-kubernetes
+#     - name: OPENSHELL_E2E_TEST
+#       default: ""
 #
 # sandboxed-containers-operator-agent-sandbox-teardown:
 #   command: teardown.sh

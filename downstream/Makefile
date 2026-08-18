@@ -1,7 +1,12 @@
-.PHONY: test-openshell-kata install-agent-sandbox install-openshell teardown preflight
+.PHONY: test-openshell-kata test-openshell-e2e test-all install-agent-sandbox install-openshell teardown preflight
 
 test-openshell-kata:
 	./scripts/run-tests.sh
+
+test-openshell-e2e:
+	./scripts/run-openshell-e2e.sh
+
+test-all: test-openshell-kata test-openshell-e2e
 
 install-agent-sandbox:
 	./scripts/install-agent-sandbox.sh
