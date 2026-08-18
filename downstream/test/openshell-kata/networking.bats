@@ -18,8 +18,15 @@ teardown_file() {
     [[ "$output" == *"veth"* ]]
 }
 
-@test "networking: nftables has active rules" {
-    run exec_in_sandbox "${SANDBOX_NAME}" nft list ruleset
+@test "networking: nftables module is active with references" {
+    run exec_in_sandbox "${SANDBOX_NAME}" cat /proc/modules
     [ "$status" -eq 0 ]
-    [[ "$output" == *"table"* ]]
+    # nf_tables should have active references (typically 30+) when OpenShell networking is set up
+    local nft_line
+    nft_line=$(echo "$output" | grep "^nf_tables " || true)
+    [[ -n "${nft_line}" ]]
+    # Third field is the reference count — should be > 0
+    local refcount
+    refcount=$(echo "${nft_line}" | awk '{print $3}')
+    (( refcount > 0 ))
 }

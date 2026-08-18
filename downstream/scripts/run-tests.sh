@@ -17,7 +17,7 @@ check_binary bats "Install bats-core: https://github.com/bats-core/bats-core#ins
 log_info "Running BATS tests from ${TEST_DIR}..."
 
 bats \
-    --formatter junit \
+    --report-formatter junit \
     --output "${ARTIFACT_DIR}" \
     --timing \
     "${TEST_DIR}"/*.bats
