@@ -1,0 +1,26 @@
+ref:
+  as: sandboxed-containers-operator-agent-sandbox-install
+  from: upi-installer
+  commands: sandboxed-containers-operator-agent-sandbox-install-commands.sh
+  resources:
+    requests:
+      cpu: 100m
+      memory: 100Mi
+  env:
+  - name: AGENT_SANDBOX_IMAGE_REPO
+    default: "registry.k8s.io/agent-sandbox/agent-sandbox-controller"
+    documentation: |-
+      The agent-sandbox controller image repository.
+      For downstream testing, set to the Konflux-built image.
+  - name: AGENT_SANDBOX_IMAGE_TAG
+    default: ""
+    documentation: |-
+      The agent-sandbox controller image tag. Required.
+  - name: AGENT_SANDBOX_HELM_CHART
+    default: ""
+    documentation: |-
+      Path to the agent-sandbox Helm chart. Defaults to the upstream chart
+      bundled in the release manifest.
+  documentation: |-
+    Installs the agent-sandbox controller via Helm.
+    Assumes OSC operator and KataConfig are already deployed by preceding steps.

@@ -1,0 +1,52 @@
+# ci-operator config for agent-sandbox downstream e2e testing.
+# Triggered by Konflux builds — Konflux builds the images, Prow runs the tests.
+#
+# This file goes in:
+#   openshift/release/ci-operator/config/openshift/kubernetes-sigs-agent-sandbox/
+#
+# The cron "0 0 31 2 1" means never (Feb 31 doesn't exist) — manual trigger only.
+# Change to a real cron for periodic runs, or use a postsubmit trigger.
+base_images:
+  upi-installer:
+    name: "4.18"
+    namespace: ocp
+    tag: upi-installer
+releases:
+  latest:
+    release:
+      architecture: amd64
+      channel: stable
+      version: "4.18"
+resources:
+  '*':
+    requests:
+      cpu: 100m
+      memory: 200Mi
+tests:
+- as: agent-sandbox-e2e-kata
+  cron: 0 0 31 2 1
+  steps:
+    cluster_profile: azure-qe
+    env:
+      BASE_DOMAIN: qe.azure.devcluster.openshift.com
+      # Agent sandbox image built by Konflux
+      AGENT_SANDBOX_IMAGE_REPO: quay.io/redhat-user-workloads/ose-osc-tenant/agent-sandbox-rhel9-operator
+      AGENT_SANDBOX_IMAGE_TAG: latest
+      # OpenShell gateway (upstream images for now)
+      OPENSHELL_IMAGE: ghcr.io/nvidia/openshell/gateway
+      OPENSHELL_IMAGE_TAG: latest
+      OPENSHELL_RUNTIME_CLASS: kata
+      OPENSHELL_LOCAL_STORAGE: "true"
+      # OSC operator from Konflux
+      CATALOG_SOURCE_NAME: brew-catalog
+      OPERATOR_INDEX_IMAGE: quay.io/redhat-user-workloads/ose-osc-tenant/osc-fbc-4-22
+      TEST_RELEASE_TYPE: Pre-GA
+      # Kata RPM with OpenShell kernel modules
+      INSTALL_KATA_RPM: "true"
+      KATA_RPM_VERSION: 3.31.0-5.rhaos4.22.el9
+      KATA_RPM_BUILD_TASK: "71587682"
+    workflow: sandboxed-containers-operator-e2e-agent-sandbox
+zz_generated_metadata:
+  branch: main
+  org: openshift
+  repo: kubernetes-sigs-agent-sandbox

@@ -1,0 +1,18 @@
+ref:
+  as: sandboxed-containers-operator-agent-sandbox-test
+  from: upi-installer
+  commands: sandboxed-containers-operator-agent-sandbox-test-commands.sh
+  resources:
+    requests:
+      cpu: 100m
+      memory: 100Mi
+  env:
+  - name: BATS_TEST_DIR
+    default: ""
+    documentation: |-
+      Path to the BATS test directory. If empty, clones the agent-sandbox
+      repo and uses downstream/test/openshell-kata/.
+  documentation: |-
+    Runs BATS integration tests for agent-sandbox + OpenShell on kata.
+    Tests sandbox lifecycle, kernel modules, networking, and cleanup.
+    Produces JUnit XML in $ARTIFACT_DIR.

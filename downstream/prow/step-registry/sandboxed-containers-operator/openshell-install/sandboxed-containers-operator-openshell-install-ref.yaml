@@ -1,0 +1,35 @@
+ref:
+  as: sandboxed-containers-operator-openshell-install
+  from: upi-installer
+  commands: sandboxed-containers-operator-openshell-install-commands.sh
+  resources:
+    requests:
+      cpu: 100m
+      memory: 100Mi
+  env:
+  - name: OPENSHELL_IMAGE
+    default: "ghcr.io/nvidia/openshell/gateway"
+    documentation: |-
+      The OpenShell gateway image repository.
+  - name: OPENSHELL_IMAGE_TAG
+    default: "latest"
+    documentation: |-
+      The OpenShell gateway image tag.
+  - name: OPENSHELL_HELM_CHART
+    default: ""
+    documentation: |-
+      Path to the OpenShell Helm chart. If empty, uses the upstream chart
+      from the OpenShell repo.
+  - name: OPENSHELL_RUNTIME_CLASS
+    default: "kata"
+    documentation: |-
+      The RuntimeClass for sandbox pods. Defaults to "kata" (OSC/OpenShift).
+      Upstream uses "kata-qemu".
+  - name: OPENSHELL_LOCAL_STORAGE
+    default: "true"
+    documentation: |-
+      Enable local-path PV provisioning for bare-metal clusters.
+  documentation: |-
+    Installs the OpenShell gateway with SCC, service accounts, and gateway config.
+    Assumes OSC operator and KataConfig are already deployed.
+    Independent of agent-sandbox — can be used with other controllers.

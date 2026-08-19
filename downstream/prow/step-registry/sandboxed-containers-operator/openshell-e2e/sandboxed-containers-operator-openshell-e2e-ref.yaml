@@ -1,0 +1,21 @@
+ref:
+  as: sandboxed-containers-operator-openshell-e2e
+  from: upi-installer
+  commands: sandboxed-containers-operator-openshell-e2e-commands.sh
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  env:
+  - name: OPENSHELL_E2E_FEATURES
+    default: "e2e-kubernetes"
+    documentation: |-
+      Cargo test features to enable. Default runs all kubernetes-compatible tests.
+  - name: OPENSHELL_E2E_TEST
+    default: ""
+    documentation: |-
+      Run a specific test by name. Empty runs all tests.
+  documentation: |-
+    Runs the upstream OpenShell Rust e2e test suite against the deployed gateway.
+    Tests sandbox lifecycle, workspace, policy, port forwarding, labels, and more.
+    Requires Rust toolchain in the CI image.

@@ -1,0 +1,11 @@
+ref:
+  as: sandboxed-containers-operator-agent-sandbox-teardown
+  from: upi-installer
+  commands: sandboxed-containers-operator-agent-sandbox-teardown-commands.sh
+  resources:
+    requests:
+      cpu: 100m
+      memory: 100Mi
+  documentation: |-
+    Tears down agent-sandbox and OpenShell components.
+    Does not touch OSC operator or KataConfig (managed by existing post steps).
