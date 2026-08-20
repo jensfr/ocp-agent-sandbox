@@ -120,6 +120,15 @@ func init() {
 	utilruntime.Must(sandboxv1beta1.AddToScheme(Scheme))
 }
 
+// isOwnedBySandbox reports whether pod is non-nil and owned by the given Sandbox.
+func isOwnedBySandbox(pod *corev1.Pod, sandbox *sandboxv1beta1.Sandbox) bool {
+	if pod == nil {
+		return false
+	}
+	ownership, _ := checkOwnership(pod, sandbox)
+	return ownership == resourceOwnedBySandbox
+}
+
 // SandboxReconciler reconciles a Sandbox object.
 type SandboxReconciler struct {
 	client.Client
@@ -235,8 +244,8 @@ func (r *SandboxReconciler) reconcileChildResources(ctx context.Context, sandbox
 	allErrors = errors.Join(allErrors, err)
 
 	// Reconcile Pod
-	pod, err := r.reconcilePod(ctx, sandbox, nameHash)
-	allErrors = errors.Join(allErrors, err)
+	pod, podErr := r.reconcilePod(ctx, sandbox, nameHash)
+	allErrors = errors.Join(allErrors, podErr)
 	if pod == nil {
 		sandbox.Status.PodIPs = nil
 		sandbox.Status.NodeName = ""
@@ -251,7 +260,7 @@ func (r *SandboxReconciler) reconcileChildResources(ctx context.Context, sandbox
 	allErrors = errors.Join(allErrors, err)
 
 	// compute and set overall conditions
-	conditions := r.computeConditions(sandbox, allErrors, svc, pod)
+	conditions := r.computeConditions(sandbox, allErrors, svc, pod, podErr)
 	hasFinished := false
 	for _, condition := range conditions {
 		meta.SetStatusCondition(&sandbox.Status.Conditions, condition)
@@ -267,12 +276,10 @@ func (r *SandboxReconciler) reconcileChildResources(ctx context.Context, sandbox
 	return allErrors
 }
 
-func (r *SandboxReconciler) computeConditions(sandbox *sandboxv1beta1.Sandbox, err error, svc *corev1.Service, pod *corev1.Pod) []metav1.Condition {
+func (r *SandboxReconciler) computeConditions(sandbox *sandboxv1beta1.Sandbox, err error, svc *corev1.Service, pod *corev1.Pod, podErr error) []metav1.Condition {
 	var conditions []metav1.Condition
 
-	if suspended := r.computeSuspendedCondition(sandbox, pod); suspended != nil {
-		conditions = append(conditions, *suspended)
-	}
+	conditions = append(conditions, r.computeSuspendedCondition(sandbox, pod, podErr))
 
 	if finished := r.computeFinishedCondition(sandbox, pod); finished != nil {
 		conditions = append(conditions, *finished)
@@ -283,28 +290,42 @@ func (r *SandboxReconciler) computeConditions(sandbox *sandboxv1beta1.Sandbox, e
 	return conditions
 }
 
-func (r *SandboxReconciler) computeSuspendedCondition(sandbox *sandboxv1beta1.Sandbox, pod *corev1.Pod) *metav1.Condition {
-	isSuspended := sandbox.Spec.OperatingMode == sandboxv1beta1.SandboxOperatingModeSuspended
-	if !isSuspended {
-		return nil
-	}
-
+func (r *SandboxReconciler) computeSuspendedCondition(sandbox *sandboxv1beta1.Sandbox, pod *corev1.Pod, podErr error) metav1.Condition {
 	suspended := metav1.Condition{
 		Type:               string(sandboxv1beta1.SandboxConditionSuspended),
 		ObservedGeneration: sandbox.Generation,
-	}
-	if pod == nil {
-		// Mark Suspended condition as True
-		suspended.Status = metav1.ConditionTrue
-		suspended.Reason = sandboxv1beta1.SandboxReasonSuspendedPodTerminated
-		suspended.Message = "Pod has been terminated. Sandbox is not operational."
-	} else {
-		suspended.Status = metav1.ConditionFalse
-		suspended.Reason = sandboxv1beta1.SandboxReasonSuspendedPodNotTerminated
-		suspended.Message = "Pod has not been terminated. Sandbox is operational."
+		Status:             metav1.ConditionFalse,
+		Reason:             sandboxv1beta1.SandboxReasonNotSuspended,
+		Message:            "Sandbox is not suspended",
 	}
 
-	return &suspended
+	if sandbox.Spec.OperatingMode != sandboxv1beta1.SandboxOperatingModeSuspended {
+		return suspended
+	}
+
+	if pod == nil && podErr != nil {
+		suspended.Status = metav1.ConditionUnknown
+		suspended.Reason = sandboxv1beta1.SandboxReasonSuspendedPodStateUnknown
+		suspended.Message = "Pod state is unknown. Sandbox suspension cannot be confirmed"
+		return suspended
+	}
+
+	if pod == nil {
+		suspended.Status = metav1.ConditionTrue
+		suspended.Reason = sandboxv1beta1.SandboxReasonSuspendedPodTerminated
+		suspended.Message = "Pod has been terminated. Sandbox is suspended"
+		return suspended
+	}
+
+	if !isOwnedBySandbox(pod, sandbox) {
+		suspended.Reason = sandboxv1beta1.SandboxReasonSuspendedPodNotOwned
+		suspended.Message = "Refused to delete pod because it is not owned by this sandbox"
+		return suspended
+	}
+
+	suspended.Reason = sandboxv1beta1.SandboxReasonSuspendedPodTerminating
+	suspended.Message = "Pod is terminating. Sandbox is suspending"
+	return suspended
 }
 
 func (r *SandboxReconciler) computeReadyCondition(sandbox *sandboxv1beta1.Sandbox, err error, svc *corev1.Service, pod *corev1.Pod) metav1.Condition {
