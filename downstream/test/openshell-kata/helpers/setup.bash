@@ -68,6 +68,14 @@ create_sandbox_run() {
     local name="${1:?sandbox name required}"
     shift
 
+    if (( ${#name} > SANDBOX_NAME_MAX_LEN )); then
+        echo "Sandbox name '${name}' exceeds ${SANDBOX_NAME_MAX_LEN} char limit" >&2
+        return 1
+    fi
+
+    # Clean up stale sandbox from a previous run
+    delete_sandbox "${name}" 2>/dev/null || true
+
     if [[ "${USE_OPENSHELL}" == "true" ]]; then
         openshell sandbox create --name "${name}" --no-keep --no-tty -- "$@"
     else
