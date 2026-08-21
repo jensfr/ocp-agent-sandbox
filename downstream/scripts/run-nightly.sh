@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Nightly CI runner for agent-sandbox + OpenShell on kata.
-# Runs as an OpenShift CronJob pod or manually from any host with kubectl access.
+# Tests multiple agent-sandbox versions against a stable OpenShell + OSC + kata stack.
 #
-# Usage: run-nightly.sh [regression|integration]
-#   regression  — HEAD against pinned known-good stack (default)
-#   integration — HEAD against HEAD (all latest)
+# Usage: run-nightly.sh [all|ga|downstream|upstream]
+#   all        — test all three agent-sandbox variants (default)
+#   ga         — GA release only
+#   downstream — Konflux-built downstream HEAD only
+#   upstream   — upstream release only
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,92 +31,44 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-STRATEGY="${1:-regression}"
+MODE="${1:-all}"
 RESULTS_DIR="/tmp/ci-results/$(date -u '+%Y%m%d-%H%M%S')"
 mkdir -p "${RESULTS_DIR}"
 
-# Version pins per strategy (overridable via env vars from CronJob)
-case "${STRATEGY}" in
-    regression)
-        export OPENSHELL_IMAGE_TAG="${OPENSHELL_IMAGE_TAG:-0.0.105}"
-        export KATA_RPM_VERSION="${KATA_RPM_VERSION:-3.31.0-5}"
-        ;;
-    integration)
-        export OPENSHELL_IMAGE_TAG="${OPENSHELL_IMAGE_TAG:-latest}"
-        export KATA_RPM_VERSION="${KATA_RPM_VERSION:-latest}"
-        ;;
-    *)
-        log_error "Unknown strategy: ${STRATEGY}. Use 'regression' or 'integration'."
-        exit 1
-        ;;
-esac
+# --- Stable stack (pinned, never changes) ---
+OPENSHELL_IMAGE_TAG="${OPENSHELL_IMAGE_TAG:-0.0.105}"
+KATA_RPM_VERSION="${KATA_RPM_VERSION:-3.31.0-5}"
 
-STACK_INFO="Strategy: ${STRATEGY} | OpenShell: ${OPENSHELL_IMAGE_TAG} | Kata: ${KATA_RPM_VERSION}"
+# --- Agent Sandbox variants to test ---
+declare -A AS_VARIANTS
+AS_VARIANTS=(
+    [ga]="registry.redhat.io/agent-sandbox/agent-sandbox-rhel9-operator:latest"
+    [downstream]="quay.io/redhat-user-workloads/ose-osc-tenant/agent-sandbox-operator:latest"
+    [upstream]="registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.5.5"
+)
+
+AS_CONTROLLER_NS="agent-sandbox-system"
+AS_CONTROLLER_DEPLOY="agent-sandbox-controller"
+
 START_TIME=$(date +%s)
-
-# --- Detect new code since last run ---
-LAST_RUN_FILE="/tmp/ci-results/.last-run-state"
-CHANGELOG=""
-
-# Agent sandbox controller image digest
-CURRENT_AS_DIGEST=$(kubectl get deployment agent-sandbox-controller -n agent-sandbox-system -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
-CURRENT_GW_DIGEST=$(kubectl get pod -n openshell -l app.kubernetes.io/name=openshell -o jsonpath='{.items[0].spec.containers[0].image}' 2>/dev/null || true)
-
-if [[ -f "${LAST_RUN_FILE}" ]]; then
-    PREV_AS_DIGEST=$(grep 'agent-sandbox=' "${LAST_RUN_FILE}" 2>/dev/null | cut -d= -f2 || true)
-    PREV_GW_DIGEST=$(grep 'openshell=' "${LAST_RUN_FILE}" 2>/dev/null | cut -d= -f2 || true)
-
-    if [[ "${CURRENT_AS_DIGEST}" != "${PREV_AS_DIGEST}" && -n "${PREV_AS_DIGEST}" ]]; then
-        CHANGELOG+="Agent Sandbox image changed: ${PREV_AS_DIGEST##*/} -> ${CURRENT_AS_DIGEST##*/}
-"
-    fi
-    if [[ "${CURRENT_GW_DIGEST}" != "${PREV_GW_DIGEST}" && -n "${PREV_GW_DIGEST}" ]]; then
-        CHANGELOG+="OpenShell gateway image changed: ${PREV_GW_DIGEST##*/} -> ${CURRENT_GW_DIGEST##*/}
-"
-    fi
-fi
-
-# Save current state for next run
-mkdir -p "$(dirname "${LAST_RUN_FILE}")"
-cat > "${LAST_RUN_FILE}" <<STATE
-agent-sandbox=${CURRENT_AS_DIGEST}
-openshell=${CURRENT_GW_DIGEST}
-STATE
 
 # --- Cleanup old results ---
 find /tmp/ci-results -maxdepth 1 -type d -mtime +7 -exec rm -rf {} \; 2>/dev/null || true
 
 # --- Preflight ---
-log_info "=== Nightly CI (${STRATEGY}) starting ==="
-log_info "${STACK_INFO}"
+log_info "=== Nightly CI starting (mode: ${MODE}) ==="
+log_info "Stable stack: OpenShell ${OPENSHELL_IMAGE_TAG} | Kata ${KATA_RPM_VERSION}"
 
 if ! kubectl cluster-info &>/dev/null; then
     log_error "Cluster API unreachable"
-    notify_failure 0 1 1 "0s" "${STACK_INFO}" "Cluster API unreachable" ""
+    notify_failure 0 1 1 "0s" "Cluster unreachable" "Cluster API unreachable" ""
     exit 1
 fi
 
-# --- Match openshell CLI to gateway version ---
-GATEWAY_IMAGE=$(kubectl get pod -n openshell -l app.kubernetes.io/name=openshell -o jsonpath='{.items[0].spec.containers[0].image}' 2>/dev/null || true)
-GATEWAY_TAG="${GATEWAY_IMAGE##*:}"
-INSTALLED_VERSION=$(openshell --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
-
-if [[ -n "${GATEWAY_TAG}" && "${GATEWAY_TAG}" != "latest" && "${INSTALLED_VERSION}" != "${GATEWAY_TAG#v}" ]]; then
-    log_info "Gateway version ${GATEWAY_TAG} differs from CLI ${INSTALLED_VERSION:-unknown}, downloading matching CLI..."
-    CLI_URL="https://github.com/NVIDIA/OpenShell/releases/download/${GATEWAY_TAG}/openshell-x86_64-unknown-linux-musl.tar.gz"
-    if curl -sfL "${CLI_URL}" | tar xz -C /tmp/ 2>/dev/null; then
-        mv /tmp/openshell /usr/local/bin/openshell 2>/dev/null || cp /tmp/openshell /usr/local/bin/openshell
-        chmod +x /usr/local/bin/openshell
-        log_info "Updated openshell CLI to ${GATEWAY_TAG}"
-    else
-        log_warn "Could not download CLI for ${GATEWAY_TAG}, using installed version"
-    fi
-fi
-
-# Verify gateway pod is running
+# Verify gateway is running
 if ! kubectl get pod -n openshell -l app.kubernetes.io/name=openshell --field-selector=status.phase=Running 2>/dev/null | grep -q Running; then
     log_error "OpenShell gateway pod not running"
-    notify_failure 0 1 1 "0s" "${STACK_INFO}" "OpenShell gateway pod not running" ""
+    notify_failure 0 1 1 "0s" "Gateway down" "OpenShell gateway not running" ""
     exit 1
 fi
 
@@ -124,12 +78,12 @@ if command -v openshell &>/dev/null; then
     openshell sandbox delete --all 2>/dev/null || true
 fi
 
-# Register gateway — use ClusterIP if in-cluster, port-forward if external
+# Register gateway
 GATEWAY_IP=$(kubectl get svc openshell -n openshell -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
 if [[ -n "${GATEWAY_IP}" ]] && curl -sf -o /dev/null --connect-timeout 2 "http://${GATEWAY_IP}:8080" 2>/dev/null; then
     GATEWAY_ENDPOINT="http://${GATEWAY_IP}:8080"
 else
-    log_info "ClusterIP not reachable (running outside cluster?), using port-forward..."
+    log_info "Using port-forward for gateway access..."
     LOCAL_PORT=18080
     kubectl -n openshell port-forward svc/openshell "${LOCAL_PORT}:8080" &>/dev/null &
     PF_PID=$!
@@ -142,123 +96,149 @@ if command -v openshell &>/dev/null; then
     openshell gateway add --name nightly-ci "${GATEWAY_ENDPOINT}" 2>/dev/null || true
 fi
 
-# --- Run BATS tests ---
-log_info "=== Running BATS tests ==="
-BATS_EXIT=0
-BATS_OUTPUT="${RESULTS_DIR}/bats-output.txt"
+# --- Determine which variants to test ---
+VARIANTS_TO_TEST=()
+case "${MODE}" in
+    all) VARIANTS_TO_TEST=("ga" "downstream" "upstream") ;;
+    ga|downstream|upstream) VARIANTS_TO_TEST=("${MODE}") ;;
+    *) log_error "Unknown mode: ${MODE}"; exit 1 ;;
+esac
 
-if command -v bats &>/dev/null; then
-    bats \
-        --report-formatter junit \
-        --output "${RESULTS_DIR}" \
-        --timing \
-        "${SCRIPT_DIR}/../test/openshell-kata/"*.bats \
-        2>&1 | tee "${BATS_OUTPUT}" || BATS_EXIT=$?
-else
-    log_error "bats not found — skipping BATS tests"
-    BATS_EXIT=1
-    echo "bats not installed" > "${BATS_OUTPUT}"
+# --- Save original controller image for restore ---
+ORIGINAL_IMAGE=$(kubectl get deployment "${AS_CONTROLLER_DEPLOY}" -n "${AS_CONTROLLER_NS}" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
+
+# --- Test each variant ---
+ALL_RESULTS=""
+TOTAL_PASS=0
+TOTAL_FAIL=0
+TOTAL_TESTS=0
+HAS_FAILURE=0
+
+run_variant() {
+    local variant_name="$1"
+    local variant_image="$2"
+    local variant_dir="${RESULTS_DIR}/${variant_name}"
+    mkdir -p "${variant_dir}"
+
+    log_info ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info ">>> Testing: ${variant_name} (${variant_image##*/})"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    # --- Swap controller image ---
+    log_info "Deploying ${variant_name} controller..."
+    kubectl set image "deployment/${AS_CONTROLLER_DEPLOY}" -n "${AS_CONTROLLER_NS}" \
+        "${AS_CONTROLLER_DEPLOY}=${variant_image}" 2>&1 || {
+        log_error "Failed to set image for ${variant_name}"
+        ALL_RESULTS+="SKIP ${variant_name}: failed to deploy ${variant_image}\n"
+        return
+    }
+
+    # Wait for rollout
+    if ! kubectl rollout status "deployment/${AS_CONTROLLER_DEPLOY}" -n "${AS_CONTROLLER_NS}" --timeout=120s 2>&1; then
+        log_error "Rollout failed for ${variant_name}"
+        ALL_RESULTS+="FAIL ${variant_name}: controller rollout failed\n"
+        (( HAS_FAILURE++ )) || true
+        # Collect diagnostics
+        collect_diagnostics "${variant_dir}/diagnostic-bundle.txt"
+        return
+    fi
+
+    log_info "Controller running: $(kubectl get deployment "${AS_CONTROLLER_DEPLOY}" -n "${AS_CONTROLLER_NS}" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)"
+
+    # Clean sandboxes between variants
+    kubectl delete sandboxes --all -A --timeout=30s 2>/dev/null || true
+    if command -v openshell &>/dev/null; then
+        openshell sandbox delete --all 2>/dev/null || true
+    fi
+    sleep 5
+
+    # --- Run BATS tests ---
+    local bats_exit=0
+    local bats_output="${variant_dir}/bats-output.txt"
+
+    if command -v bats &>/dev/null; then
+        bats \
+            --report-formatter junit \
+            --output "${variant_dir}" \
+            --timing \
+            "${SCRIPT_DIR}/../test/openshell-kata/"*.bats \
+            2>&1 | tee "${bats_output}" || bats_exit=$?
+    else
+        log_error "bats not found"
+        bats_exit=1
+        echo "bats not installed" > "${bats_output}"
+    fi
+
+    # --- Parse results ---
+    local passed=0 failed=0
+    if [[ -f "${bats_output}" ]]; then
+        passed=$(grep -c '^ok ' "${bats_output}" || true)
+        failed=$(grep -c '^not ok ' "${bats_output}" || true)
+    fi
+    passed=${passed:-0}
+    failed=${failed:-0}
+    local total=$((passed + failed))
+
+    TOTAL_PASS=$((TOTAL_PASS + passed))
+    TOTAL_FAIL=$((TOTAL_FAIL + failed))
+    TOTAL_TESTS=$((TOTAL_TESTS + total))
+
+    if (( failed > 0 || bats_exit != 0 )); then
+        (( HAS_FAILURE++ )) || true
+        local failed_list
+        failed_list=$(grep '^not ok ' "${bats_output}" 2>/dev/null | sed 's/^not ok [0-9]* /  - /' || true)
+        ALL_RESULTS+="FAIL ${variant_name}: ${passed}/${total} passed\n${failed_list}\n"
+        collect_diagnostics "${variant_dir}/diagnostic-bundle.txt"
+    else
+        ALL_RESULTS+="PASS ${variant_name}: ${passed}/${total} passed\n"
+    fi
+
+    log_info ">>> ${variant_name}: ${passed}/${total} passed"
+}
+
+for variant in "${VARIANTS_TO_TEST[@]}"; do
+    run_variant "${variant}" "${AS_VARIANTS[${variant}]}"
+done
+
+# --- Restore original controller ---
+if [[ -n "${ORIGINAL_IMAGE}" ]]; then
+    log_info "Restoring original controller image..."
+    kubectl set image "deployment/${AS_CONTROLLER_DEPLOY}" -n "${AS_CONTROLLER_NS}" \
+        "${AS_CONTROLLER_DEPLOY}=${ORIGINAL_IMAGE}" 2>/dev/null || true
 fi
 
-# --- Run upstream Rust e2e tests ---
-log_info "=== Running upstream OpenShell Rust e2e tests ==="
-E2E_EXIT=0
-E2E_OUTPUT="${RESULTS_DIR}/e2e-output.txt"
-E2E_BINARY="${E2E_BINARY:-/usr/local/bin/openshell-e2e}"
-
-if [[ -x "${E2E_BINARY}" ]]; then
-    # Health port-forward for readyz test
-    HEALTH_PORT=8081
-    GATEWAY_POD=$(kubectl get pods -n openshell -l app.kubernetes.io/name=openshell -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "openshell-0")
-    kubectl -n openshell port-forward "pod/${GATEWAY_POD}" "${HEALTH_PORT}:health" &>/dev/null &
-    local_pf_pid=$!
-    sleep 3
-
-    OPENSHELL_BIN="$(command -v openshell || echo /usr/local/bin/openshell)" \
-    OPENSHELL_E2E_HEALTH_PORT="${HEALTH_PORT}" \
-        "${E2E_BINARY}" --test-threads=1 --nocapture \
-        2>&1 | tee "${E2E_OUTPUT}" || E2E_EXIT=$?
-
-    kill "${local_pf_pid}" 2>/dev/null || true
-else
-    log_warn "Rust e2e binary not found at ${E2E_BINARY} — skipping"
-    echo "e2e binary not found" > "${E2E_OUTPUT}"
-fi
-
-# --- Parse results ---
+# --- Summary ---
 END_TIME=$(date +%s)
-DURATION="$(( END_TIME - START_TIME ))s"
+DURATION="$((END_TIME - START_TIME))s"
 
-BATS_PASSED=0
-BATS_FAILED=0
-if [[ -f "${BATS_OUTPUT}" ]]; then
-    BATS_PASSED=$(grep -c '^ok ' "${BATS_OUTPUT}" || true)
-    BATS_FAILED=$(grep -c '^not ok ' "${BATS_OUTPUT}" || true)
-fi
-BATS_PASSED=${BATS_PASSED:-0}
-BATS_FAILED=${BATS_FAILED:-0}
+STACK_INFO="OpenShell: ${OPENSHELL_IMAGE_TAG} | Kata: ${KATA_RPM_VERSION}"
+SUMMARY="Agent Sandbox Nightly CI (${MODE})
+Tested ${#VARIANTS_TO_TEST[@]} variant(s) in ${DURATION}
+Stack: ${STACK_INFO}
 
-E2E_PASSED=0
-E2E_FAILED=0
-if [[ -f "${E2E_OUTPUT}" ]] && grep -q 'test result:' "${E2E_OUTPUT}" 2>/dev/null; then
-    E2E_PASSED=$(awk '/test result:/{sum += $4} END {print sum+0}' "${E2E_OUTPUT}")
-    E2E_FAILED=$(awk '/test result:/{sum += $8} END {print sum+0}' "${E2E_OUTPUT}")
-fi
+Results:
+$(echo -e "${ALL_RESULTS}")
+Total: ${TOTAL_PASS}/${TOTAL_TESTS} passed, ${TOTAL_FAIL} failed"
 
-TOTAL_PASSED=$((BATS_PASSED + E2E_PASSED))
-TOTAL_FAILED=$((BATS_FAILED + E2E_FAILED))
-TOTAL=$((TOTAL_PASSED + TOTAL_FAILED))
+log_info ""
+log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+log_info ">>> ${SUMMARY}"
+log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-log_info "Results: ${TOTAL_PASSED}/${TOTAL} passed (${BATS_PASSED} BATS + ${E2E_PASSED} e2e), ${TOTAL_FAILED} failed, ${DURATION}"
+# --- Write to log ---
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') $(( HAS_FAILURE > 0 ? 'FAIL' : 'PASS' )) ${SUMMARY}" >> /tmp/ci-results/history.log
+echo "${SUMMARY}" > "${RESULTS_DIR}/summary.txt"
 
 # --- Notify ---
-if (( TOTAL_FAILED == 0 && BATS_EXIT == 0 && E2E_EXIT == 0 )); then
-    log_info "=== All tests passed ==="
-    local success_msg="${TOTAL_PASSED}/${TOTAL} (${BATS_PASSED} BATS + ${E2E_PASSED} e2e)"
-    local change_info=""
-    if [[ -n "${CHANGELOG}" ]]; then
-        change_info="
-Changes since last run:
-${CHANGELOG}"
-    fi
-    local full_msg="Nightly CI passed -- ${success_msg} in ${DURATION}
-Cluster: virtlab725 | ${STACK_INFO}${change_info}"
-
-    # Always write to log file
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') PASS ${full_msg}" >> /tmp/ci-results/history.log
-    echo "${full_msg}" > "${RESULTS_DIR}/summary.txt"
-
-    notify_success "${success_msg}" "${DURATION}" "${STACK_INFO}${change_info}"
+if (( HAS_FAILURE > 0 )); then
+    # Find first diagnostic bundle
+    local_diag=$(find "${RESULTS_DIR}" -name "diagnostic-bundle.txt" -type f | head -1)
+    notify_failure "${TOTAL_PASS}" "${TOTAL_FAIL}" "${TOTAL_TESTS}" "${DURATION}" \
+        "${STACK_INFO}" "$(echo -e "${ALL_RESULTS}")" "${local_diag:-}"
 else
-    log_error "=== ${TOTAL_FAILED} test(s) failed ==="
-
-    FAILED_TESTS=""
-    [[ -f "${BATS_OUTPUT}" ]] && FAILED_TESTS+=$(grep '^not ok ' "${BATS_OUTPUT}" 2>/dev/null | sed 's/^not ok [0-9]* /  - /' || true)
-    [[ -f "${E2E_OUTPUT}" ]] && FAILED_TESTS+=$(grep 'FAILED' "${E2E_OUTPUT}" 2>/dev/null | grep -v 'test result' | sed 's/^/  - /' || true)
-
-    DIAGNOSTIC_FILE="${RESULTS_DIR}/diagnostic-bundle.txt"
-    collect_diagnostics "${DIAGNOSTIC_FILE}"
-
-    {
-        echo ""
-        echo "=== BATS Output ==="
-        cat "${BATS_OUTPUT}" 2>/dev/null || echo "(no output)"
-        echo ""
-        echo "=== E2E Output (last 50 lines) ==="
-        tail -50 "${E2E_OUTPUT}" 2>/dev/null || echo "(no output)"
-    } >> "${DIAGNOSTIC_FILE}"
-
-    local fail_msg="Nightly CI failed -- ${TOTAL_PASSED}/${TOTAL} passed, ${TOTAL_FAILED} failed in ${DURATION}
-Failed: ${FAILED_TESTS}
-Cluster: virtlab725 | ${STACK_INFO}"
-
-    # Always write to log file
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') FAIL ${fail_msg}" >> /tmp/ci-results/history.log
-    echo "${fail_msg}" > "${RESULTS_DIR}/summary.txt"
-
-    notify_failure "${TOTAL_PASSED}" "${TOTAL_FAILED}" "${TOTAL}" "${DURATION}" \
-        "${STACK_INFO}" "${FAILED_TESTS}" "${DIAGNOSTIC_FILE}"
+    notify_success "${TOTAL_PASS}/${TOTAL_TESTS} across ${#VARIANTS_TO_TEST[@]} variants" "${DURATION}" "${STACK_INFO}"
 fi
 
 log_info "Results saved to ${RESULTS_DIR}"
-exit $(( BATS_EXIT > 0 || E2E_EXIT > 0 ? 1 : 0 ))
+exit $(( HAS_FAILURE > 0 ? 1 : 0 ))
