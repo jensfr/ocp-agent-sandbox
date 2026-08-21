@@ -69,6 +69,35 @@ print(json.dumps(d))
         -d "${payload}" 2>/dev/null || log_warn "Slack API post failed"
 }
 
+send_email() {
+    local subject="$1"
+    local body="$2"
+    local to="${CI_EMAIL_TO:-}"
+    local from="${CI_EMAIL_FROM:-agent-sandbox-ci@redhat.com}"
+    local smtp="${CI_SMTP_SERVER:-smtp.corp.redhat.com}"
+    local smtp_port="${CI_SMTP_PORT:-25}"
+
+    if [[ -z "${to}" ]]; then
+        log_warn "CI_EMAIL_TO not set, skipping email notification"
+        return 0
+    fi
+
+    python3 -c "
+import smtplib, sys
+from email.mime.text import MIMEText
+msg = MIMEText(sys.stdin.read(), 'plain', 'utf-8')
+msg['Subject'] = sys.argv[1]
+msg['From'] = sys.argv[2]
+msg['To'] = sys.argv[3]
+try:
+    with smtplib.SMTP(sys.argv[4], int(sys.argv[5]), timeout=10) as s:
+        s.sendmail(sys.argv[2], [sys.argv[3]], msg.as_string())
+    print('Email sent', file=sys.stderr)
+except Exception as e:
+    print(f'Email failed: {e}', file=sys.stderr)
+" "${subject}" "${from}" "${to}" "${smtp}" "${smtp_port}" <<< "${body}" 2>&1 | while read -r line; do log_info "${line}"; done
+}
+
 notify_success() {
     local total_tests="$1"
     local duration="$2"
@@ -77,6 +106,7 @@ notify_success() {
     local msg="*Nightly CI passed* -- ${total_tests} tests in ${duration}
 Cluster: virtlab725 | ${stack_info}"
     slack_post "${msg}"
+    send_email "Agent Sandbox CI: PASS ${total_tests}" "${msg}"
 }
 
 notify_failure() {
@@ -101,4 +131,13 @@ Cluster: virtlab725 | ${stack_info}"
     if [[ -n "${diagnostic_file}" && -f "${diagnostic_file}" ]]; then
         slack_post_file "${diagnostic_file}" "Diagnostic bundle" "${thread_ts}"
     fi
+
+    local email_body="${msg}"
+    if [[ -n "${diagnostic_file}" && -f "${diagnostic_file}" ]]; then
+        email_body+="
+
+--- Diagnostic Bundle ---
+$(head -c 50000 "${diagnostic_file}")"
+    fi
+    send_email "Agent Sandbox CI: FAIL ${failed}/${total}" "${email_body}"
 }

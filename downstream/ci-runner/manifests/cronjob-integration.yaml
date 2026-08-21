@@ -39,6 +39,10 @@ spec:
                   name: slack-credentials
                   key: webhook-url
                   optional: true
+            - name: CI_EMAIL_TO
+              value: "jfreiman@redhat.com"
+            - name: CI_SMTP_SERVER
+              value: "smtp.corp.redhat.com"
             resources:
               requests:
                 cpu: 100m
