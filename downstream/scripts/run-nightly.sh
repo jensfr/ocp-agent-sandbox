@@ -143,19 +143,25 @@ fi
 END_TIME=$(date +%s)
 DURATION="$(( END_TIME - START_TIME ))s"
 
-BATS_PASSED=$(grep -c '^ok ' "${BATS_OUTPUT}" 2>/dev/null || echo 0)
-BATS_FAILED=$(grep -c '^not ok ' "${BATS_OUTPUT}" 2>/dev/null || echo 0)
+BATS_PASSED=0
+BATS_FAILED=0
+if [[ -f "${BATS_OUTPUT}" ]]; then
+    BATS_PASSED=$(grep -c '^ok ' "${BATS_OUTPUT}" || true)
+    BATS_FAILED=$(grep -c '^not ok ' "${BATS_OUTPUT}" || true)
+fi
+BATS_PASSED=${BATS_PASSED:-0}
+BATS_FAILED=${BATS_FAILED:-0}
 
 E2E_PASSED=0
 E2E_FAILED=0
-if [[ -f "${E2E_OUTPUT}" ]] && grep -q 'test result:' "${E2E_OUTPUT}"; then
-    E2E_PASSED=$(awk '/test result:/{sum += $4} END {print sum+0}' "${E2E_OUTPUT}" || echo 0)
-    E2E_FAILED=$(awk '/test result:/{sum += $8} END {print sum+0}' "${E2E_OUTPUT}" || echo 0)
+if [[ -f "${E2E_OUTPUT}" ]] && grep -q 'test result:' "${E2E_OUTPUT}" 2>/dev/null; then
+    E2E_PASSED=$(awk '/test result:/{sum += $4} END {print sum+0}' "${E2E_OUTPUT}")
+    E2E_FAILED=$(awk '/test result:/{sum += $8} END {print sum+0}' "${E2E_OUTPUT}")
 fi
 
-TOTAL_PASSED=$(( ${BATS_PASSED:-0} + ${E2E_PASSED:-0} ))
-TOTAL_FAILED=$(( ${BATS_FAILED:-0} + ${E2E_FAILED:-0} ))
-TOTAL=$(( TOTAL_PASSED + TOTAL_FAILED ))
+TOTAL_PASSED=$((BATS_PASSED + E2E_PASSED))
+TOTAL_FAILED=$((BATS_FAILED + E2E_FAILED))
+TOTAL=$((TOTAL_PASSED + TOTAL_FAILED))
 
 log_info "Results: ${TOTAL_PASSED}/${TOTAL} passed (${BATS_PASSED} BATS + ${E2E_PASSED} e2e), ${TOTAL_FAILED} failed, ${DURATION}"
 
