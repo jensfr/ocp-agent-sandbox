@@ -10,6 +10,7 @@
 | What | Path | Status |
 |------|------|--------|
 | BATS integration tests (14 tests) | `downstream/test/openshell-kata/` | Validated 14/14 |
+| Upstream OpenShell Rust e2e (80 tests) | via `downstream/scripts/run-openshell-e2e.sh` | Validated 80/80 |
 | BATS test helpers (openshell CLI + kubectl fallback) | `downstream/test/openshell-kata/helpers/setup.bash` | Done |
 | OpenShell gateway Helm chart (SCC, SAs, config, PVs) | `downstream/helm/openshell-gateway/` | Lints clean, templates verified |
 | Prow step registry (5 steps + workflow) | `downstream/prow/step-registry/` | Draft, ready for review |
@@ -62,12 +63,12 @@ export KUBECONFIG=~/kubeconfig.virtlab725
 # Verify cluster prerequisites
 make -C downstream preflight
 
-# Run BATS tests (14 tests, ~2.5 min)
+# Run BATS integration tests (14 tests, ~2.5 min)
 make -C downstream test-openshell-kata
 
-# Run upstream OpenShell e2e (80 tests, ~6 min)
+# Run upstream OpenShell Rust e2e tests (80 tests, ~6 min)
 make -C downstream test-openshell-e2e
 
-# Run both
+# Run all 94 tests
 make -C downstream test-all
 ```
