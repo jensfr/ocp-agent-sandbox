@@ -53,6 +53,24 @@
 | Helm chart | `confidential-devhub/charts` | chart root |
 | Prow steps + config | `openshift/release` | `ci-operator/step-registry/` + `ci-operator/config/` |
 
+### Nightly CI (CronJob)
+
+| What | Path | Purpose |
+|------|------|---------|
+| Dockerfile | `downstream/ci-runner/Dockerfile` | CI runner image (bats, openshell, oc, e2e binary) |
+| Build script | `downstream/ci-runner/build.sh` | Builds and pushes the image |
+| CronJob (regression) | `downstream/ci-runner/manifests/cronjob-regression.yaml` | Mon-Fri, pinned known-good stack |
+| CronJob (integration) | `downstream/ci-runner/manifests/cronjob-integration.yaml` | Sat, HEAD×HEAD |
+| RBAC | `downstream/ci-runner/manifests/rbac.yaml` | ServiceAccount + cluster-admin |
+| Slack secret | `downstream/ci-runner/manifests/slack-secret.yaml` | Optional webhook URL |
+| Nightly runner | `downstream/scripts/run-nightly.sh` | Preflight, tests, results, Slack |
+| Slack helper | `downstream/scripts/lib/slack-notify.sh` | Webhook + bot token support |
+| Diagnostics collector | `downstream/scripts/lib/collect-diagnostics.sh` | Failure bundle |
+
+Deploy: `oc apply -f downstream/ci-runner/manifests/`
+Manual trigger: `oc create job --from=cronjob/agent-sandbox-nightly-regression test-run -n agent-sandbox-ci`
+Check results: `oc logs job/test-run -n agent-sandbox-ci`
+
 ### How to Reproduce
 
 ```bash

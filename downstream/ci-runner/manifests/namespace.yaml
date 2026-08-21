@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agent-sandbox-ci
+  labels:
+    app.kubernetes.io/name: agent-sandbox-ci
+    app.kubernetes.io/part-of: agent-sandbox
