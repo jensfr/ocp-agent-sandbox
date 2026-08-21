@@ -65,7 +65,7 @@ if [[ "${MODE}" == "all" || "${MODE}" == "upstream-head" ]]; then
     NODE_NAME=$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
 
     # Use oc debug node to clone, build, and create image on the host
-    BUILD_OUTPUT=$(kubectl debug "node/${NODE_NAME}" --image=golang:1.24 -q -- bash -c '
+    BUILD_OUTPUT=$(kubectl debug "node/${NODE_NAME}" --image=golang:1.26 -q -- bash -c '
         set -e
         cd /tmp
         git clone --depth 1 https://github.com/kubernetes-sigs/agent-sandbox.git 2>/dev/null
