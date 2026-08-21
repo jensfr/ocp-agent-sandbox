@@ -215,12 +215,20 @@ log_info "Results: ${TOTAL_PASSED}/${TOTAL} passed (${BATS_PASSED} BATS + ${E2E_
 if (( TOTAL_FAILED == 0 && BATS_EXIT == 0 && E2E_EXIT == 0 )); then
     log_info "=== All tests passed ==="
     local success_msg="${TOTAL_PASSED}/${TOTAL} (${BATS_PASSED} BATS + ${E2E_PASSED} e2e)"
+    local change_info=""
     if [[ -n "${CHANGELOG}" ]]; then
-        STACK_INFO+="
+        change_info="
 Changes since last run:
 ${CHANGELOG}"
     fi
-    notify_success "${success_msg}" "${DURATION}" "${STACK_INFO}"
+    local full_msg="Nightly CI passed -- ${success_msg} in ${DURATION}
+Cluster: virtlab725 | ${STACK_INFO}${change_info}"
+
+    # Always write to log file
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') PASS ${full_msg}" >> /tmp/ci-results/history.log
+    echo "${full_msg}" > "${RESULTS_DIR}/summary.txt"
+
+    notify_success "${success_msg}" "${DURATION}" "${STACK_INFO}${change_info}"
 else
     log_error "=== ${TOTAL_FAILED} test(s) failed ==="
 
@@ -239,6 +247,14 @@ else
         echo "=== E2E Output (last 50 lines) ==="
         tail -50 "${E2E_OUTPUT}" 2>/dev/null || echo "(no output)"
     } >> "${DIAGNOSTIC_FILE}"
+
+    local fail_msg="Nightly CI failed -- ${TOTAL_PASSED}/${TOTAL} passed, ${TOTAL_FAILED} failed in ${DURATION}
+Failed: ${FAILED_TESTS}
+Cluster: virtlab725 | ${STACK_INFO}"
+
+    # Always write to log file
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') FAIL ${fail_msg}" >> /tmp/ci-results/history.log
+    echo "${fail_msg}" > "${RESULTS_DIR}/summary.txt"
 
     notify_failure "${TOTAL_PASSED}" "${TOTAL_FAILED}" "${TOTAL}" "${DURATION}" \
         "${STACK_INFO}" "${FAILED_TESTS}" "${DIAGNOSTIC_FILE}"
