@@ -58,12 +58,50 @@ if [[ -z "${AS_DOWNSTREAM_IMAGE:-}" ]]; then
     fi
 fi
 
+# --- Build upstream HEAD image on the node ---
+UPSTREAM_HEAD_IMAGE=""
+if [[ "${MODE}" == "all" || "${MODE}" == "upstream-head" ]]; then
+    log_info "Building upstream HEAD controller on node..."
+    NODE_NAME=$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
+
+    # Use oc debug node to clone, build, and create image on the host
+    BUILD_OUTPUT=$(kubectl debug "node/${NODE_NAME}" --image=golang:1.24 -q -- bash -c '
+        set -e
+        cd /tmp
+        git clone --depth 1 https://github.com/kubernetes-sigs/agent-sandbox.git 2>/dev/null
+        cd agent-sandbox
+        SHA=$(git rev-parse --short HEAD)
+        echo "UPSTREAM_SHA=${SHA}"
+        CGO_ENABLED=0 go build -ldflags="-s -w" -o /tmp/controller ./cmd/agent-sandbox-controller 2>/dev/null
+        # Build image via host podman (chroot to host)
+        cp /tmp/controller /host/tmp/agent-sandbox-controller-upstream
+        chroot /host podman build --no-cache -t localhost/agent-sandbox-controller:upstream-head -f - /tmp <<DF
+FROM registry.access.redhat.com/ubi9/ubi-minimal:9.8
+COPY agent-sandbox-controller-upstream /agent-sandbox-controller
+ENTRYPOINT ["/agent-sandbox-controller"]
+DF
+        echo "BUILD_OK"
+    ' 2>&1) || true
+
+    if echo "${BUILD_OUTPUT}" | grep -q "BUILD_OK"; then
+        UPSTREAM_SHA=$(echo "${BUILD_OUTPUT}" | grep 'UPSTREAM_SHA=' | cut -d= -f2)
+        UPSTREAM_HEAD_IMAGE="localhost/agent-sandbox-controller:upstream-head"
+        log_info "Built upstream HEAD image (${UPSTREAM_SHA})"
+    else
+        log_warn "Upstream HEAD build failed, skipping variant"
+        log_warn "${BUILD_OUTPUT}" | tail -5
+    fi
+fi
+
 declare -A AS_VARIANTS
 AS_VARIANTS=(
     [ga]="${AS_GA_IMAGE:-registry.redhat.io/agent-sandbox/agent-sandbox-rhel9-operator@sha256:554102df4c721bd27be7129c910c206ed1329be14df68906a588959b0e7d9309}"
     [downstream]="${AS_DOWNSTREAM_IMAGE}"
-    [upstream]="${AS_UPSTREAM_IMAGE:-registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.5.5}"
+    [upstream-release]="${AS_UPSTREAM_IMAGE:-registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.5.5}"
 )
+if [[ -n "${UPSTREAM_HEAD_IMAGE}" ]]; then
+    AS_VARIANTS[upstream-head]="${UPSTREAM_HEAD_IMAGE}"
+fi
 
 AS_CONTROLLER_NS="agent-sandbox-system"
 AS_CONTROLLER_DEPLOY="agent-sandbox-controller"
@@ -137,8 +175,13 @@ fi
 # --- Determine which variants to test ---
 VARIANTS_TO_TEST=()
 case "${MODE}" in
-    all) VARIANTS_TO_TEST=("ga" "downstream" "upstream") ;;
-    ga|downstream|upstream) VARIANTS_TO_TEST=("${MODE}") ;;
+    all)
+        VARIANTS_TO_TEST=("ga" "downstream" "upstream-release")
+        [[ -n "${UPSTREAM_HEAD_IMAGE}" ]] && VARIANTS_TO_TEST+=("upstream-head")
+        ;;
+    ga|downstream|upstream-release|upstream-head)
+        VARIANTS_TO_TEST=("${MODE}")
+        ;;
     *) log_error "Unknown mode: ${MODE}"; exit 1 ;;
 esac
 
