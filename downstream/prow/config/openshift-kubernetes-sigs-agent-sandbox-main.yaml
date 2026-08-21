@@ -4,9 +4,13 @@
 # This file goes in:
 #   openshift/release/ci-operator/config/openshift/kubernetes-sigs-agent-sandbox/
 #
-# Two jobs: bare-metal (customer #0 primary) and AWS nested virt (customer #0 secondary).
-# The cron "0 0 31 2 1" means never (Feb 31 doesn't exist) — manual trigger only.
-# Change to a real cron for periodic runs, or use a postsubmit trigger.
+# Three CI strategies (see downstream/prow/README.md for details):
+#   1. Regression — our HEAD against known-good OpenShell + OSC + kata
+#   2. Next-release — planned release combination
+#   3. Forward integration — HEAD×HEAD (nightly, best-effort)
+#
+# Each strategy runs on both customer #0 platforms (bare-metal, AWS).
+# Cron "0 0 31 2 1" = never (manual trigger). Replace with real cron when ready.
 base_images:
   upi-installer:
     name: "4.18"
@@ -24,54 +28,108 @@ resources:
       cpu: 100m
       memory: 200Mi
 tests:
-# --- Bare metal ---
-- as: agent-sandbox-e2e-kata-baremetal
+
+# =============================================================================
+# Strategy 1: REGRESSION — "Did our change break things?"
+# Agent Sandbox HEAD (Konflux-built) × known-good OpenShell × known-good kata
+# Trigger: on every Konflux build (postsubmit) or PR
+# =============================================================================
+
+- as: agent-sandbox-regression-baremetal
   cron: 0 0 31 2 1
   steps:
     cluster_profile: bare-metal
     env:
-      # Agent sandbox image built by Konflux
+      # Agent sandbox: Konflux-built HEAD (the moving part)
       AGENT_SANDBOX_IMAGE_REPO: quay.io/redhat-user-workloads/ose-osc-tenant/agent-sandbox-rhel9-operator
       AGENT_SANDBOX_IMAGE_TAG: latest
-      # OpenShell gateway (upstream images for now)
+      # OpenShell: pinned known-good release
       OPENSHELL_IMAGE: ghcr.io/nvidia/openshell/gateway
-      OPENSHELL_IMAGE_TAG: latest
+      OPENSHELL_IMAGE_TAG: "0.0.105"
       OPENSHELL_RUNTIME_CLASS: kata
       OPENSHELL_LOCAL_STORAGE: "true"
-      # OSC operator from Konflux
+      # OSC: pinned known-good
       CATALOG_SOURCE_NAME: brew-catalog
       OPERATOR_INDEX_IMAGE: quay.io/redhat-user-workloads/ose-osc-tenant/osc-fbc-4-22
       TEST_RELEASE_TYPE: Pre-GA
-      # Kata RPM with OpenShell kernel modules
+      # Kata RPM: pinned known-good with OpenShell kernel modules
       INSTALL_KATA_RPM: "true"
       KATA_RPM_VERSION: 3.31.0-5.rhaos4.22.el9
       KATA_RPM_BUILD_TASK: "71587682"
     workflow: sandboxed-containers-operator-e2e-agent-sandbox
-# --- AWS (nested virtualization) ---
-- as: agent-sandbox-e2e-kata-aws
+
+- as: agent-sandbox-regression-aws
   cron: 0 0 31 2 1
   steps:
     cluster_profile: aws
     env:
-      # AWS needs metal instances for kata nested virt
       COMPUTE_NODE_TYPE: m5.metal
-      # Agent sandbox image built by Konflux
       AGENT_SANDBOX_IMAGE_REPO: quay.io/redhat-user-workloads/ose-osc-tenant/agent-sandbox-rhel9-operator
       AGENT_SANDBOX_IMAGE_TAG: latest
-      # OpenShell gateway
       OPENSHELL_IMAGE: ghcr.io/nvidia/openshell/gateway
-      OPENSHELL_IMAGE_TAG: latest
+      OPENSHELL_IMAGE_TAG: "0.0.105"
       OPENSHELL_RUNTIME_CLASS: kata
       OPENSHELL_LOCAL_STORAGE: "false"
-      # OSC operator from Konflux
       CATALOG_SOURCE_NAME: brew-catalog
       OPERATOR_INDEX_IMAGE: quay.io/redhat-user-workloads/ose-osc-tenant/osc-fbc-4-22
       TEST_RELEASE_TYPE: Pre-GA
-      # Kata RPM with OpenShell kernel modules
       INSTALL_KATA_RPM: "true"
       KATA_RPM_VERSION: 3.31.0-5.rhaos4.22.el9
       KATA_RPM_BUILD_TASK: "71587682"
     workflow: sandboxed-containers-operator-e2e-agent-sandbox
+
+# =============================================================================
+# Strategy 2: NEXT-RELEASE — "Will the versions we ship together work?"
+# Planned Agent Sandbox RC × planned OpenShell RC × planned kata RPM
+# Trigger: weekly or milestone-gated
+# =============================================================================
+
+- as: agent-sandbox-next-release-baremetal
+  cron: 0 0 31 2 1
+  steps:
+    cluster_profile: bare-metal
+    env:
+      # All components at their release candidate versions
+      AGENT_SANDBOX_IMAGE_REPO: quay.io/redhat-user-workloads/ose-osc-tenant/agent-sandbox-rhel9-operator
+      AGENT_SANDBOX_IMAGE_TAG: ""  # set to RC tag when available
+      OPENSHELL_IMAGE: ghcr.io/nvidia/openshell/gateway
+      OPENSHELL_IMAGE_TAG: ""      # set to OpenShell RC tag
+      OPENSHELL_RUNTIME_CLASS: kata
+      OPENSHELL_LOCAL_STORAGE: "true"
+      CATALOG_SOURCE_NAME: brew-catalog
+      OPERATOR_INDEX_IMAGE: quay.io/redhat-user-workloads/ose-osc-tenant/osc-fbc-4-22
+      TEST_RELEASE_TYPE: Pre-GA
+      INSTALL_KATA_RPM: "true"
+      KATA_RPM_VERSION: ""         # set to kata RC version
+      KATA_RPM_BUILD_TASK: ""      # set to kata RC build task
+    workflow: sandboxed-containers-operator-e2e-agent-sandbox
+
+# =============================================================================
+# Strategy 3: FORWARD INTEGRATION — "Are projects diverging?"
+# Agent Sandbox HEAD × OpenShell HEAD × latest kata scratch build
+# Trigger: nightly, best-effort (failures are warnings, not blockers)
+# =============================================================================
+
+- as: agent-sandbox-integration-head-baremetal
+  cron: 0 0 31 2 1
+  steps:
+    cluster_profile: bare-metal
+    env:
+      # All components at HEAD / latest
+      AGENT_SANDBOX_IMAGE_REPO: quay.io/redhat-user-workloads/ose-osc-tenant/agent-sandbox-rhel9-operator
+      AGENT_SANDBOX_IMAGE_TAG: latest
+      OPENSHELL_IMAGE: ghcr.io/nvidia/openshell/gateway
+      OPENSHELL_IMAGE_TAG: latest
+      OPENSHELL_RUNTIME_CLASS: kata
+      OPENSHELL_LOCAL_STORAGE: "true"
+      CATALOG_SOURCE_NAME: brew-catalog
+      OPERATOR_INDEX_IMAGE: quay.io/redhat-user-workloads/ose-osc-tenant/osc-fbc-4-22
+      TEST_RELEASE_TYPE: Pre-GA
+      INSTALL_KATA_RPM: "true"
+      KATA_RPM_VERSION: latest     # latest scratch build
+      KATA_RPM_BUILD_TASK: ""      # latest build task
+    workflow: sandboxed-containers-operator-e2e-agent-sandbox
+
 zz_generated_metadata:
   branch: main
   org: openshift
