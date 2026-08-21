@@ -40,15 +40,38 @@ OPENSHELL_IMAGE_TAG="${OPENSHELL_IMAGE_TAG:-0.0.105}"
 KATA_RPM_VERSION="${KATA_RPM_VERSION:-3.31.0-5}"
 
 # --- Agent Sandbox variants to test ---
+# GA uses the digest from the original OLM install (no :latest on registry.redhat.io)
+# Downstream uses Konflux-built image (latest push to main)
+# Upstream uses the published release image
 declare -A AS_VARIANTS
 AS_VARIANTS=(
-    [ga]="registry.redhat.io/agent-sandbox/agent-sandbox-rhel9-operator:latest"
-    [downstream]="quay.io/redhat-user-workloads/ose-osc-tenant/agent-sandbox-operator:latest"
-    [upstream]="registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.5.5"
+    [ga]="${AS_GA_IMAGE:-registry.redhat.io/agent-sandbox/agent-sandbox-rhel9-operator@sha256:554102df4c721bd27be7129c910c206ed1329be14df68906a588959b0e7d9309}"
+    [downstream]="${AS_DOWNSTREAM_IMAGE:-quay.io/redhat-user-workloads/ose-osc-tenant/agent-sandbox-operator:0c3addf0173ad8ee68eb0fb124a6affa5f9aacab}"
+    [upstream]="${AS_UPSTREAM_IMAGE:-registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.5.5}"
 )
 
 AS_CONTROLLER_NS="agent-sandbox-system"
 AS_CONTROLLER_DEPLOY="agent-sandbox-controller"
+AS_CSV_NAME="agent-sandbox-operator.v0.9.0"
+
+swap_controller_image() {
+    local image="$1"
+    # Patch the CSV — OLM reconciles the Deployment from the CSV, so patching
+    # the Deployment directly gets reverted. Patching the CSV is the stable way.
+    kubectl -n "${AS_CONTROLLER_NS}" patch csv "${AS_CSV_NAME}" --type='json' \
+        -p="[{\"op\":\"replace\",\"path\":\"/spec/install/spec/deployments/0/spec/template/spec/containers/0/image\",\"value\":\"${image}\"}]" 2>&1
+
+    # Also set imagePullPolicy to allow localhost images
+    local pull_policy="IfNotPresent"
+    if [[ "${image}" == localhost/* ]]; then
+        pull_policy="Never"
+    fi
+    kubectl -n "${AS_CONTROLLER_NS}" patch csv "${AS_CSV_NAME}" --type='json' \
+        -p="[{\"op\":\"replace\",\"path\":\"/spec/install/spec/deployments/0/spec/template/spec/containers/0/imagePullPolicy\",\"value\":\"${pull_policy}\"}]" 2>/dev/null || true
+
+    # Wait for OLM to reconcile the Deployment
+    sleep 10
+}
 
 START_TIME=$(date +%s)
 
@@ -125,26 +148,30 @@ run_variant() {
     log_info ">>> Testing: ${variant_name} (${variant_image##*/})"
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    # --- Swap controller image ---
+    # --- Swap controller image via CSV (OLM-managed) ---
     log_info "Deploying ${variant_name} controller..."
-    kubectl set image "deployment/${AS_CONTROLLER_DEPLOY}" -n "${AS_CONTROLLER_NS}" \
-        "${AS_CONTROLLER_DEPLOY}=${variant_image}" 2>&1 || {
+    swap_controller_image "${variant_image}" || {
         log_error "Failed to set image for ${variant_name}"
         ALL_RESULTS+="SKIP ${variant_name}: failed to deploy ${variant_image}\n"
         return
     }
 
-    # Wait for rollout
+    # Wait for rollout with new image
     if ! kubectl rollout status "deployment/${AS_CONTROLLER_DEPLOY}" -n "${AS_CONTROLLER_NS}" --timeout=120s 2>&1; then
         log_error "Rollout failed for ${variant_name}"
         ALL_RESULTS+="FAIL ${variant_name}: controller rollout failed\n"
         (( HAS_FAILURE++ )) || true
-        # Collect diagnostics
         collect_diagnostics "${variant_dir}/diagnostic-bundle.txt"
         return
     fi
 
-    log_info "Controller running: $(kubectl get deployment "${AS_CONTROLLER_DEPLOY}" -n "${AS_CONTROLLER_NS}" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)"
+    # Verify the image actually changed
+    local actual_image
+    actual_image=$(kubectl get deployment "${AS_CONTROLLER_DEPLOY}" -n "${AS_CONTROLLER_NS}" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)
+    log_info "Controller running: ${actual_image}"
+    if [[ "${actual_image}" != "${variant_image}" ]]; then
+        log_warn "Image mismatch: expected ${variant_image##*/}, got ${actual_image##*/}"
+    fi
 
     # Clean sandboxes between variants
     kubectl delete sandboxes --all -A --timeout=30s 2>/dev/null || true
@@ -204,8 +231,7 @@ done
 # --- Restore original controller ---
 if [[ -n "${ORIGINAL_IMAGE}" ]]; then
     log_info "Restoring original controller image..."
-    kubectl set image "deployment/${AS_CONTROLLER_DEPLOY}" -n "${AS_CONTROLLER_NS}" \
-        "${AS_CONTROLLER_DEPLOY}=${ORIGINAL_IMAGE}" 2>/dev/null || true
+    swap_controller_image "${ORIGINAL_IMAGE}" 2>/dev/null || true
 fi
 
 # --- Summary ---
@@ -227,7 +253,9 @@ log_info ">>> ${SUMMARY}"
 log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # --- Write to log ---
-echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') $(( HAS_FAILURE > 0 ? 'FAIL' : 'PASS' )) ${SUMMARY}" >> /tmp/ci-results/history.log
+local_status="PASS"
+(( HAS_FAILURE > 0 )) && local_status="FAIL"
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') ${local_status} ${SUMMARY}" >> /tmp/ci-results/history.log
 echo "${SUMMARY}" > "${RESULTS_DIR}/summary.txt"
 
 # --- Notify ---
