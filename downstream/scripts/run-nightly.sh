@@ -41,12 +41,27 @@ KATA_RPM_VERSION="${KATA_RPM_VERSION:-3.31.0-5}"
 
 # --- Agent Sandbox variants to test ---
 # GA uses the digest from the original OLM install (no :latest on registry.redhat.io)
-# Downstream uses Konflux-built image (latest push to main)
+# Downstream resolves the latest Konflux-built commit tag at runtime
 # Upstream uses the published release image
+
+# Resolve latest downstream Konflux tag (latest main commit SHA)
+DOWNSTREAM_REPO="quay.io/redhat-user-workloads/ose-osc-tenant/agent-sandbox-operator"
+if [[ -z "${AS_DOWNSTREAM_IMAGE:-}" ]]; then
+    LATEST_DOWNSTREAM_TAG=$(curl -sf "https://quay.io/api/v1/repository/redhat-user-workloads/ose-osc-tenant/agent-sandbox-operator/tag/?limit=20&onlyActiveTags=true" 2>/dev/null | \
+        python3 -c "import json,sys; tags=[t['name'] for t in json.load(sys.stdin).get('tags',[]) if len(t['name'])==40 and not t['name'].startswith('on-pr') and not t['name'].startswith('sha256')]; print(tags[0] if tags else '')" 2>/dev/null || true)
+    if [[ -n "${LATEST_DOWNSTREAM_TAG}" ]]; then
+        log_info "Resolved latest downstream tag: ${LATEST_DOWNSTREAM_TAG}"
+        AS_DOWNSTREAM_IMAGE="${DOWNSTREAM_REPO}:${LATEST_DOWNSTREAM_TAG}"
+    else
+        log_warn "Could not resolve latest downstream tag, using hardcoded"
+        AS_DOWNSTREAM_IMAGE="${DOWNSTREAM_REPO}:0c3addf0173ad8ee68eb0fb124a6affa5f9aacab"
+    fi
+fi
+
 declare -A AS_VARIANTS
 AS_VARIANTS=(
     [ga]="${AS_GA_IMAGE:-registry.redhat.io/agent-sandbox/agent-sandbox-rhel9-operator@sha256:554102df4c721bd27be7129c910c206ed1329be14df68906a588959b0e7d9309}"
-    [downstream]="${AS_DOWNSTREAM_IMAGE:-quay.io/redhat-user-workloads/ose-osc-tenant/agent-sandbox-operator:0c3addf0173ad8ee68eb0fb124a6affa5f9aacab}"
+    [downstream]="${AS_DOWNSTREAM_IMAGE}"
     [upstream]="${AS_UPSTREAM_IMAGE:-registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.5.5}"
 )
 
