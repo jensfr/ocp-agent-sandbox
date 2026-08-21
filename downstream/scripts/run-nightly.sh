@@ -8,16 +8,52 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
 source "${SCRIPT_DIR}/lib/common.sh"
+# shellcheck source=lib/cluster-checks.sh
 source "${SCRIPT_DIR}/lib/cluster-checks.sh"
+# shellcheck source=lib/slack-notify.sh
 source "${SCRIPT_DIR}/lib/slack-notify.sh"
+# shellcheck source=lib/collect-diagnostics.sh
 source "${SCRIPT_DIR}/lib/collect-diagnostics.sh"
+
+# --- Lockfile: prevent overlapping runs ---
+LOCKFILE="/tmp/ci-nightly.lock"
+exec 200>"${LOCKFILE}"
+if ! flock -n 200; then
+    echo "Another nightly CI run is in progress. Exiting."
+    exit 0
+fi
+
+# --- Global timeout: kill the entire run after 30 minutes ---
+TIMEOUT_PID=""
+(
+    sleep 1800
+    log_error "Nightly CI timed out after 30 minutes"
+    kill -TERM "$$" 2>/dev/null
+) &
+TIMEOUT_PID=$!
+
+# --- Cleanup trap ---
+cleanup() {
+    local exit_code=$?
+    [[ -n "${TIMEOUT_PID}" ]] && kill "${TIMEOUT_PID}" 2>/dev/null || true
+    [[ -n "${PF_PID:-}" ]] && kill "${PF_PID}" 2>/dev/null || true
+    # Clean up leftover sandboxes
+    if command -v openshell &>/dev/null; then
+        openshell sandbox delete --all 2>/dev/null || true
+    fi
+    flock -u 200
+    exit "${exit_code}"
+}
+trap cleanup EXIT INT TERM
 
 STRATEGY="${1:-regression}"
 RESULTS_DIR="/tmp/ci-results/$(date -u '+%Y%m%d-%H%M%S')"
 mkdir -p "${RESULTS_DIR}"
 
 # Load Slack credentials
+# shellcheck source=/dev/null
 [[ -f /etc/ci/slack-env ]] && source /etc/ci/slack-env
 
 # Version pins per strategy
@@ -52,9 +88,10 @@ if ! kubectl cluster-info &>/dev/null; then
 fi
 
 # Check and fix common issues
-if ls /etc/kata-containers/config.d/ 2>/dev/null | grep -q .; then
+if compgen -G "/etc/kata-containers/config.d/*" &>/dev/null; then
     log_warn "Stale files in kata config.d/ — moving aside"
     for f in /etc/kata-containers/config.d/*; do
+        [[ -e "${f}" ]] || continue
         sudo mv "${f}" "/root/$(basename "${f}").moved-by-ci" 2>/dev/null || true
     done
     slack_post "Warning: moved stale kata config drop-ins aside on virtlab725"

@@ -43,10 +43,10 @@ slack_post_file() {
 _slack_post_webhook() {
     local text="$1"
     local payload
-    payload=$(printf '{"text": "%s"}' "$(echo "${text}" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')")
-    curl -s -X POST "${SLACK_WEBHOOK_URL}" \
+    payload=$(python3 -c "import json,sys; print(json.dumps({'text': sys.stdin.read()}))" <<< "${text}")
+    curl -sf -X POST "${SLACK_WEBHOOK_URL}" \
         -H "Content-Type: application/json" \
-        -d "${payload}" >/dev/null 2>&1
+        -d "${payload}" >/dev/null 2>&1 || log_warn "Slack webhook post failed"
 }
 
 _slack_post_api() {
@@ -56,15 +56,17 @@ _slack_post_api() {
     local payload
     payload=$(python3 -c "
 import json, sys
-d = {'channel': '${channel}', 'text': sys.stdin.read()}
-if '${thread_ts}':
-    d['thread_ts'] = '${thread_ts}'
+channel = sys.argv[1]
+thread_ts = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] else None
+d = {'channel': channel, 'text': sys.stdin.read()}
+if thread_ts:
+    d['thread_ts'] = thread_ts
 print(json.dumps(d))
-" <<< "${text}")
-    curl -s -X POST "https://slack.com/api/chat.postMessage" \
+" "${channel}" "${thread_ts}" <<< "${text}")
+    curl -sf -X POST "https://slack.com/api/chat.postMessage" \
         -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
         -H "Content-Type: application/json" \
-        -d "${payload}" 2>/dev/null
+        -d "${payload}" 2>/dev/null || log_warn "Slack API post failed"
 }
 
 notify_success() {
