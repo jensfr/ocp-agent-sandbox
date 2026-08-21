@@ -97,6 +97,25 @@ exec_in_sandbox() {
     fi
 }
 
+wait_for_sandbox_phase() {
+    local name="${1:?sandbox name required}"
+    local target_phase="${2:-Ready}"
+    local timeout="${3:-${TIMEOUT_CREATE}}"
+    local elapsed=0
+
+    while (( elapsed < timeout )); do
+        local phase
+        phase=$(openshell sandbox list 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | awk -v n="${name}" '$1 == n {print $NF}' || true)
+        if [[ "${phase}" == "${target_phase}" ]]; then
+            return 0
+        fi
+        sleep "${POLL_INTERVAL}"
+        (( elapsed += POLL_INTERVAL ))
+    done
+    echo "Timed out waiting for sandbox ${name} to reach ${target_phase} (last: ${phase:-unknown})" >&2
+    return 1
+}
+
 delete_sandbox() {
     local name="${1:?sandbox name required}"
 

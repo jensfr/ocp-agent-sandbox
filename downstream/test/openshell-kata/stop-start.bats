@@ -18,7 +18,9 @@ teardown_file() {
     fi
 
     openshell sandbox stop "${SANDBOX_NAME}"
+    wait_for_sandbox_phase "${SANDBOX_NAME}" "Stopped"
     openshell sandbox start "${SANDBOX_NAME}"
+    wait_for_sandbox_phase "${SANDBOX_NAME}" "Ready"
     run exec_in_sandbox "${SANDBOX_NAME}" echo "resumed"
     [ "$status" -eq 0 ]
     [[ "$output" == *"resumed"* ]]
@@ -38,10 +40,12 @@ teardown_file() {
     fi
 
     for i in 1 2 3; do
-        # Wait briefly for gateway reconciler to settle between cycles
-        sleep 2
+        # Poll until gateway confirms Ready before stopping (avoids race)
+        wait_for_sandbox_phase "${SANDBOX_NAME}" "Ready"
         openshell sandbox stop "${SANDBOX_NAME}"
+        wait_for_sandbox_phase "${SANDBOX_NAME}" "Stopped"
         openshell sandbox start "${SANDBOX_NAME}"
+        wait_for_sandbox_phase "${SANDBOX_NAME}" "Ready"
         run exec_in_sandbox "${SANDBOX_NAME}" echo "cycle-${i}"
         [ "$status" -eq 0 ]
         [[ "$output" == *"cycle-${i}"* ]]
