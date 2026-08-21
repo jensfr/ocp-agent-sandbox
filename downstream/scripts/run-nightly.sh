@@ -52,6 +52,35 @@ esac
 STACK_INFO="Strategy: ${STRATEGY} | OpenShell: ${OPENSHELL_IMAGE_TAG} | Kata: ${KATA_RPM_VERSION}"
 START_TIME=$(date +%s)
 
+# --- Detect new code since last run ---
+LAST_RUN_FILE="/tmp/ci-results/.last-run-state"
+CHANGELOG=""
+
+# Agent sandbox controller image digest
+CURRENT_AS_DIGEST=$(kubectl get deployment agent-sandbox-controller -n agent-sandbox-system -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
+CURRENT_GW_DIGEST=$(kubectl get pod -n openshell -l app.kubernetes.io/name=openshell -o jsonpath='{.items[0].spec.containers[0].image}' 2>/dev/null || true)
+
+if [[ -f "${LAST_RUN_FILE}" ]]; then
+    PREV_AS_DIGEST=$(grep 'agent-sandbox=' "${LAST_RUN_FILE}" 2>/dev/null | cut -d= -f2 || true)
+    PREV_GW_DIGEST=$(grep 'openshell=' "${LAST_RUN_FILE}" 2>/dev/null | cut -d= -f2 || true)
+
+    if [[ "${CURRENT_AS_DIGEST}" != "${PREV_AS_DIGEST}" && -n "${PREV_AS_DIGEST}" ]]; then
+        CHANGELOG+="Agent Sandbox image changed: ${PREV_AS_DIGEST##*/} -> ${CURRENT_AS_DIGEST##*/}
+"
+    fi
+    if [[ "${CURRENT_GW_DIGEST}" != "${PREV_GW_DIGEST}" && -n "${PREV_GW_DIGEST}" ]]; then
+        CHANGELOG+="OpenShell gateway image changed: ${PREV_GW_DIGEST##*/} -> ${CURRENT_GW_DIGEST##*/}
+"
+    fi
+fi
+
+# Save current state for next run
+mkdir -p "$(dirname "${LAST_RUN_FILE}")"
+cat > "${LAST_RUN_FILE}" <<STATE
+agent-sandbox=${CURRENT_AS_DIGEST}
+openshell=${CURRENT_GW_DIGEST}
+STATE
+
 # --- Cleanup old results ---
 find /tmp/ci-results -maxdepth 1 -type d -mtime +7 -exec rm -rf {} \; 2>/dev/null || true
 
@@ -63,6 +92,23 @@ if ! kubectl cluster-info &>/dev/null; then
     log_error "Cluster API unreachable"
     notify_failure 0 1 1 "0s" "${STACK_INFO}" "Cluster API unreachable" ""
     exit 1
+fi
+
+# --- Match openshell CLI to gateway version ---
+GATEWAY_IMAGE=$(kubectl get pod -n openshell -l app.kubernetes.io/name=openshell -o jsonpath='{.items[0].spec.containers[0].image}' 2>/dev/null || true)
+GATEWAY_TAG="${GATEWAY_IMAGE##*:}"
+INSTALLED_VERSION=$(openshell --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+
+if [[ -n "${GATEWAY_TAG}" && "${GATEWAY_TAG}" != "latest" && "${INSTALLED_VERSION}" != "${GATEWAY_TAG#v}" ]]; then
+    log_info "Gateway version ${GATEWAY_TAG} differs from CLI ${INSTALLED_VERSION:-unknown}, downloading matching CLI..."
+    CLI_URL="https://github.com/NVIDIA/OpenShell/releases/download/${GATEWAY_TAG}/openshell-x86_64-unknown-linux-musl.tar.gz"
+    if curl -sfL "${CLI_URL}" | tar xz -C /tmp/ 2>/dev/null; then
+        mv /tmp/openshell /usr/local/bin/openshell 2>/dev/null || cp /tmp/openshell /usr/local/bin/openshell
+        chmod +x /usr/local/bin/openshell
+        log_info "Updated openshell CLI to ${GATEWAY_TAG}"
+    else
+        log_warn "Could not download CLI for ${GATEWAY_TAG}, using installed version"
+    fi
 fi
 
 # Verify gateway pod is running
@@ -168,7 +214,13 @@ log_info "Results: ${TOTAL_PASSED}/${TOTAL} passed (${BATS_PASSED} BATS + ${E2E_
 # --- Notify ---
 if (( TOTAL_FAILED == 0 && BATS_EXIT == 0 && E2E_EXIT == 0 )); then
     log_info "=== All tests passed ==="
-    notify_success "${TOTAL_PASSED}/${TOTAL} (${BATS_PASSED} BATS + ${E2E_PASSED} e2e)" "${DURATION}" "${STACK_INFO}"
+    local success_msg="${TOTAL_PASSED}/${TOTAL} (${BATS_PASSED} BATS + ${E2E_PASSED} e2e)"
+    if [[ -n "${CHANGELOG}" ]]; then
+        STACK_INFO+="
+Changes since last run:
+${CHANGELOG}"
+    fi
+    notify_success "${success_msg}" "${DURATION}" "${STACK_INFO}"
 else
     log_error "=== ${TOTAL_FAILED} test(s) failed ==="
 
