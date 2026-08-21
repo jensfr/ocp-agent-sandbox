@@ -37,10 +37,23 @@ sandboxed-containers-operator-e2e-agent-sandbox workflow:
     6. sandboxed-containers-operator-agent-sandbox-teardown (NEW)
 ```
 
+## Target environments
+
+Two jobs matching customer #0 environments:
+
+| Job | Cluster Profile | Notes |
+|-----|----------------|-------|
+| `agent-sandbox-e2e-kata-baremetal` | `bare-metal` | Primary customer #0 environment. Validated on virtlab725. |
+| `agent-sandbox-e2e-kata-aws` | `aws` | Secondary customer #0 environment. Needs metal instances (m5.metal/c5.metal) for kata nested virt. `OPENSHELL_LOCAL_STORAGE=false` — AWS has dynamic provisioning. |
+
+The workflow, scripts, and tests are identical across both — only `cluster_profile`
+and instance type differ.
+
 ## Before submitting the PR
 
 1. Review with OSC CI working group (Wainer Moschetta, Tom Buskey)
-2. Verify the `cluster_profile` and `BASE_DOMAIN` match available CI pools
-3. Update `KATA_RPM_VERSION` and `KATA_RPM_BUILD_TASK` to current values
-4. Decide on trigger: `cron` for periodic, or postsubmit for Konflux-triggered
-5. The `upi-installer` base image may need Rust toolchain for the openshell-e2e step — check if a custom image is needed
+2. Verify `cluster_profile` names match available CI pools for bare-metal and AWS
+3. Confirm AWS instance type supports nested virt (m5.metal or c5.metal)
+4. Update `KATA_RPM_VERSION` and `KATA_RPM_BUILD_TASK` to current values
+5. Decide on trigger: `cron` for periodic, or postsubmit for Konflux-triggered
+6. The `upi-installer` base image may need Rust toolchain for the openshell-e2e step — check if a custom image is needed
