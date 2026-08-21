@@ -4,11 +4,13 @@ Prototype CI artifacts for testing agent sandbox with OpenShell and kata
 containers on OpenShift. Each subdirectory maps to its target repo for
 later extraction:
 
-| Directory   | Target repo                              | Target path                  |
-|-------------|------------------------------------------|------------------------------|
-| `test/`     | `openshift/sandboxed-containers-operator`| `test/agent-sandbox/`        |
-| `helm/`     | `confidential-devhub/charts`             | chart root                   |
-| `scripts/`  | `openshift/release`                      | step registry                |
+| Directory   | Target repo                                | Target path                  |
+|-------------|--------------------------------------------|------------------------------|
+| `test/`     | stays in `openshift/kubernetes-sigs-agent-sandbox` | `test/openshell-kata/` |
+| `helm/`     | `confidential-devhub/charts`               | chart root                   |
+| `scripts/`  | `openshift/release`                        | step registry                |
+| `prow/`     | `openshift/release`                        | step registry + job config   |
+| `ci-runner/`| image at `quay.io/jensfr/agent-sandbox-ci-runner` | CronJob on cluster    |
 
 No cross-directory imports — each area must work standalone after extraction.
 

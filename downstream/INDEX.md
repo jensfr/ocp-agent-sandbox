@@ -49,7 +49,7 @@
 
 | Component | Target Repo | Target Path |
 |-----------|-------------|-------------|
-| BATS tests | `openshift/sandboxed-containers-operator` | `test/agent-sandbox/` |
+| BATS tests | `openshift/kubernetes-sigs-agent-sandbox` | `test/openshell-kata/` (stays in this repo) |
 | Helm chart | `confidential-devhub/charts` | chart root |
 | Prow steps + config | `openshift/release` | `ci-operator/step-registry/` + `ci-operator/config/` |
 
