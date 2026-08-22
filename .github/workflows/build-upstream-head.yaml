@@ -1,0 +1,57 @@
+name: Build upstream HEAD controller image
+
+on:
+  schedule:
+    - cron: '30 1 * * *'  # 01:30 UTC daily, 30 min before nightly tests
+  workflow_dispatch: {}     # manual trigger
+
+env:
+  UPSTREAM_REPO: kubernetes-sigs/agent-sandbox
+  IMAGE: quay.io/jensfr/agent-sandbox-controller
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Clone upstream HEAD
+      run: |
+        git clone --depth 1 https://github.com/${{ env.UPSTREAM_REPO }}.git upstream
+        cd upstream
+        echo "UPSTREAM_SHA=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+        echo "UPSTREAM_SHA_FULL=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.26'
+
+    - name: Build controller binary
+      run: |
+        cd upstream
+        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+          -ldflags="-s -w" \
+          -o /tmp/agent-sandbox-controller \
+          ./cmd/agent-sandbox-controller
+
+    - name: Build container image
+      run: |
+        cat > /tmp/Dockerfile <<'EOF'
+        FROM registry.access.redhat.com/ubi9/ubi-minimal:9.8
+        COPY agent-sandbox-controller /agent-sandbox-controller
+        ENTRYPOINT ["/agent-sandbox-controller"]
+        EOF
+        docker build -t ${{ env.IMAGE }}:upstream-head -f /tmp/Dockerfile /tmp/
+        docker tag ${{ env.IMAGE }}:upstream-head ${{ env.IMAGE }}:${{ env.UPSTREAM_SHA }}
+
+    - name: Login to quay.io
+      uses: docker/login-action@v3
+      with:
+        registry: quay.io
+        username: ${{ secrets.QUAY_USERNAME }}
+        password: ${{ secrets.QUAY_PASSWORD }}
+
+    - name: Push images
+      run: |
+        docker push ${{ env.IMAGE }}:upstream-head
+        docker push ${{ env.IMAGE }}:${{ env.UPSTREAM_SHA }}
+        echo "Pushed upstream HEAD (${{ env.UPSTREAM_SHA }}) to ${{ env.IMAGE }}"
