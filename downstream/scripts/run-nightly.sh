@@ -18,6 +18,8 @@ source "${SCRIPT_DIR}/lib/cluster-checks.sh"
 source "${SCRIPT_DIR}/lib/slack-notify.sh"
 # shellcheck source=lib/collect-diagnostics.sh
 source "${SCRIPT_DIR}/lib/collect-diagnostics.sh"
+# shellcheck source=lib/run-history.sh
+source "${SCRIPT_DIR}/lib/run-history.sh"
 
 # --- Cleanup trap ---
 PF_PID=""
@@ -156,6 +158,10 @@ TOTAL_PASS=0
 TOTAL_FAIL=0
 TOTAL_TESTS=0
 HAS_FAILURE=0
+declare -A VARIANT_RESULTS_JSON
+
+# Load previous run state for comparison
+load_previous_state
 
 run_variant() {
     local variant_name="$1"
@@ -241,6 +247,15 @@ run_variant() {
         ALL_RESULTS+="PASS ${variant_name}: ${passed}/${total} passed\n"
     fi
 
+    # Collect per-test results as JSON for history comparison
+    local failed_tests_json="[]"
+    if [[ -f "${bats_output}" ]]; then
+        failed_tests_json=$(grep '^not ok ' "${bats_output}" 2>/dev/null | \
+            sed 's/^not ok [0-9]* //' | sed 's/ #.*$//' | \
+            python3 -c "import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))" 2>/dev/null || echo "[]")
+    fi
+    VARIANT_RESULTS_JSON[${variant_name}]="{\"passed\":${passed},\"failed\":${failed},\"total\":${total},\"failed_tests\":${failed_tests_json}}"
+
     log_info ">>> ${variant_name}: ${passed}/${total} passed"
 }
 
@@ -258,6 +273,36 @@ fi
 END_TIME=$(date +%s)
 DURATION="$((END_TIME - START_TIME))s"
 
+# --- Build JSON for all variants ---
+RESULTS_JSON="{"
+for v in "${VARIANTS_TO_TEST[@]}"; do
+    RESULTS_JSON+="\"${v}\":${VARIANT_RESULTS_JSON[${v}]:-{}},"
+done
+RESULTS_JSON="${RESULTS_JSON%,}}"
+
+# --- Get upstream changelog ---
+CURRENT_UPSTREAM_SHA=""
+if [[ -n "${AS_VARIANTS[upstream-head]:-}" ]]; then
+    CURRENT_UPSTREAM_SHA=$(skopeo inspect "docker://${AS_VARIANTS[upstream-head]}" 2>/dev/null | \
+        python3 -c "import json,sys; labels=json.load(sys.stdin).get('Labels',{}); print(labels.get('org.opencontainers.image.revision',''))" 2>/dev/null || true)
+    if [[ -z "${CURRENT_UPSTREAM_SHA}" ]]; then
+        # Fallback: extract from image tag
+        CURRENT_UPSTREAM_SHA=$(kubectl get deployment "${AS_CONTROLLER_DEPLOY}" -n "${AS_CONTROLLER_NS}" \
+            -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null | grep -oE '[a-f0-9]{7,40}' | tail -1 || true)
+    fi
+fi
+
+UPSTREAM_CHANGELOG=""
+if [[ -n "${CURRENT_UPSTREAM_SHA}" ]]; then
+    UPSTREAM_CHANGELOG=$(get_upstream_changelog "${CURRENT_UPSTREAM_SHA}")
+fi
+
+# --- Compare with previous run ---
+RESULT_COMPARISON=$(compare_results "${RESULTS_JSON}")
+
+# --- Save state for next run ---
+save_run_state "${RESULTS_JSON}"
+
 STACK_INFO="OpenShell: ${OPENSHELL_IMAGE_TAG} | Kata: ${KATA_RPM_VERSION}"
 SUMMARY="Agent Sandbox Nightly CI (${MODE})
 Tested ${#VARIANTS_TO_TEST[@]} variant(s) in ${DURATION}
@@ -265,7 +310,12 @@ Stack: ${STACK_INFO}
 
 Results:
 $(echo -e "${ALL_RESULTS}")
-Total: ${TOTAL_PASS}/${TOTAL_TESTS} passed, ${TOTAL_FAIL} failed"
+Total: ${TOTAL_PASS}/${TOTAL_TESTS} passed, ${TOTAL_FAIL} failed
+
+${RESULT_COMPARISON}
+${UPSTREAM_CHANGELOG:+
+Upstream commits:
+${UPSTREAM_CHANGELOG}}"
 
 log_info ""
 log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
