@@ -79,10 +79,11 @@ compare_results() {
 import json, sys
 
 try:
-    current = json.loads(sys.argv[1])
-    previous = json.loads(sys.argv[2])
-except:
-    print('Could not parse results for comparison.')
+    lines = sys.stdin.read().split('\n---SEPARATOR---\n')
+    current = json.loads(lines[0])
+    previous = json.loads(lines[1])
+except Exception as e:
+    print(f'Could not parse results for comparison: {e}')
     sys.exit(0)
 
 changes = []
@@ -123,5 +124,9 @@ else:
 if stable_failures:
     print('Known stable failures:')
     print('\n'.join(stable_failures))
-" "${current_json}" "${PREV_RESULTS}" 2>/dev/null || echo "Could not compare results."
+" <<COMPARE_EOF 2>/dev/null || echo "Could not compare results."
+${current_json}
+---SEPARATOR---
+${PREV_RESULTS}
+COMPARE_EOF
 }
