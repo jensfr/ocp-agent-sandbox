@@ -248,13 +248,21 @@ run_variant() {
     fi
 
     # Collect per-test results as JSON for history comparison
-    local failed_tests_json="[]"
-    if [[ -f "${bats_output}" ]]; then
-        failed_tests_json=$(grep '^not ok ' "${bats_output}" 2>/dev/null | \
-            sed 's/^not ok [0-9]* //' | sed 's/ #.*$//' | \
-            python3 -c "import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))" 2>/dev/null || echo "[]")
-    fi
-    VARIANT_RESULTS_JSON[${variant_name}]="{\"passed\":${passed},\"failed\":${failed},\"total\":${total},\"failed_tests\":${failed_tests_json}}"
+    local variant_json
+    variant_json=$(python3 -c "
+import json, sys
+failed = []
+try:
+    with open(sys.argv[1]) as f:
+        for line in f:
+            if line.startswith('not ok '):
+                # Strip 'not ok N ' prefix and ' # in Nms' suffix
+                name = line.strip().split(' ', 3)[-1].split(' #')[0] if len(line.strip().split(' ', 3)) > 3 else line.strip()
+                failed.append(name)
+except: pass
+print(json.dumps({'passed': int(sys.argv[2]), 'failed': int(sys.argv[3]), 'total': int(sys.argv[4]), 'failed_tests': failed}))
+" "${bats_output}" "${passed}" "${failed}" "${total}" 2>/dev/null || echo '{"passed":0,"failed":0,"total":0,"failed_tests":[]}')
+    VARIANT_RESULTS_JSON[${variant_name}]="${variant_json}"
 
     log_info ">>> ${variant_name}: ${passed}/${total} passed"
 }
@@ -274,11 +282,19 @@ END_TIME=$(date +%s)
 DURATION="$((END_TIME - START_TIME))s"
 
 # --- Build JSON for all variants ---
-RESULTS_JSON="{"
-for v in "${VARIANTS_TO_TEST[@]}"; do
-    RESULTS_JSON+="\"${v}\":${VARIANT_RESULTS_JSON[${v}]:-{}},"
-done
-RESULTS_JSON="${RESULTS_JSON%,}}"
+RESULTS_JSON=$(python3 -c "
+import json, sys
+result = {}
+for line in sys.stdin:
+    line = line.strip()
+    if not line: continue
+    key, val = line.split('=', 1)
+    result[key] = json.loads(val)
+print(json.dumps(result))
+" <<JSONEOF
+$(for v in "${VARIANTS_TO_TEST[@]}"; do echo "${v}=${VARIANT_RESULTS_JSON[${v}]:-{}}"; done)
+JSONEOF
+)
 
 # --- Get upstream changelog ---
 CURRENT_UPSTREAM_SHA=""
