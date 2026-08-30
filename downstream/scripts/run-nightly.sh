@@ -282,19 +282,22 @@ END_TIME=$(date +%s)
 DURATION="$((END_TIME - START_TIME))s"
 
 # --- Build JSON for all variants ---
+# Write each variant's JSON to a temp file, then merge with Python
+RESULTS_TMPFILE=$(mktemp)
+for v in "${VARIANTS_TO_TEST[@]}"; do
+    echo "${v}=${VARIANT_RESULTS_JSON[${v}]:-"{}"}" >> "${RESULTS_TMPFILE}"
+done
 RESULTS_JSON=$(python3 -c "
 import json, sys
 result = {}
-for line in sys.stdin:
+for line in open(sys.argv[1]):
     line = line.strip()
     if not line: continue
     key, val = line.split('=', 1)
     result[key] = json.loads(val)
 print(json.dumps(result))
-" <<JSONEOF
-$(for v in "${VARIANTS_TO_TEST[@]}"; do echo "${v}=${VARIANT_RESULTS_JSON[${v}]:-{}}"; done)
-JSONEOF
-)
+" "${RESULTS_TMPFILE}" 2>&1) || RESULTS_JSON="{}"
+rm -f "${RESULTS_TMPFILE}"
 
 # --- Get upstream changelog ---
 CURRENT_UPSTREAM_SHA=""
