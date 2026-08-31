@@ -14,11 +14,32 @@ save_run_state() {
     upstream_sha=$(kubectl get deployment agent-sandbox-controller -n agent-sandbox-system \
         -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null | grep -oE '[a-f0-9]{7,}' | tail -1 || true)
 
+    # Append to history (keep last 90 entries)
+    local existing_history
+    existing_history=$(kubectl get configmap "${HISTORY_CM}" -n "${HISTORY_NS}" \
+        -o jsonpath='{.data.history}' 2>/dev/null || echo "[]")
+    local new_history
+    new_history=$(python3 -c "
+import json, sys
+try:
+    history = json.loads(sys.argv[1]) if sys.argv[1] else []
+except: history = []
+entry = {
+    'date': sys.argv[2],
+    'results': json.loads(sys.argv[3]),
+    'upstream_sha': sys.argv[4]
+}
+history.append(entry)
+history = history[-90:]  # keep last 90
+print(json.dumps(history))
+" "${existing_history}" "$(date -u '+%Y-%m-%d')" "${results_json}" "${upstream_sha}" 2>/dev/null || echo "[]")
+
     # Store in ConfigMap (create or update)
     kubectl create configmap "${HISTORY_CM}" -n "${HISTORY_NS}" \
         --from-literal="last-results=${results_json}" \
         --from-literal="last-upstream-sha=${upstream_sha}" \
         --from-literal="last-run-time=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+        --from-literal="history=${new_history}" \
         --dry-run=client -o yaml | kubectl apply -f - 2>/dev/null || true
 }
 
