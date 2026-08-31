@@ -64,7 +64,7 @@ declare -A AS_VARIANTS
 AS_VARIANTS=(
     [ga]="${AS_GA_IMAGE:-registry.redhat.io/agent-sandbox/agent-sandbox-rhel9-operator@sha256:554102df4c721bd27be7129c910c206ed1329be14df68906a588959b0e7d9309}"
     [downstream]="${AS_DOWNSTREAM_IMAGE}"
-    [upstream-release]="${AS_UPSTREAM_RELEASE_IMAGE:-registry.k8s.io/agent-sandbox/agent-sandbox-controller:v0.5.6}"
+    [upstream-release]="${AS_UPSTREAM_RELEASE_IMAGE:-registry.k8s.io/agent-sandbox/agent-sandbox-controller:v1.0.0}"
     [upstream-head]="${AS_UPSTREAM_HEAD_IMAGE:-quay.io/jensfr/agent-sandbox-controller:upstream-head}"
 )
 
