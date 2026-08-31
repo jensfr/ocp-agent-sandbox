@@ -351,22 +351,22 @@ echo "${SUMMARY}" > "${RESULTS_DIR}/summary.txt"
 if (( HAS_FAILURE > 0 )); then
     # Find first diagnostic bundle
     local_diag=$(find "${RESULTS_DIR}" -name "diagnostic-bundle.txt" -type f | head -1)
-    local extra_info=""
-    [[ -n "${RESULT_COMPARISON}" ]] && extra_info+="
+    EXTRA_INFO=""
+    [[ -n "${RESULT_COMPARISON}" ]] && EXTRA_INFO+="
 ${RESULT_COMPARISON}"
-    [[ -n "${UPSTREAM_CHANGELOG}" ]] && extra_info+="
+    [[ -n "${UPSTREAM_CHANGELOG}" ]] && EXTRA_INFO+="
 Upstream commits:
 ${UPSTREAM_CHANGELOG}"
     notify_failure "${TOTAL_PASS}" "${TOTAL_FAIL}" "${TOTAL_TESTS}" "${DURATION}" \
-        "${STACK_INFO}${extra_info}" "$(echo -e "${ALL_RESULTS}")" "${local_diag:-}"
+        "${STACK_INFO}${EXTRA_INFO}" "$(echo -e "${ALL_RESULTS}")" "${local_diag:-}"
 else
-    local extra_info=""
-    [[ -n "${RESULT_COMPARISON}" ]] && extra_info+="
+    EXTRA_INFO=""
+    [[ -n "${RESULT_COMPARISON}" ]] && EXTRA_INFO+="
 ${RESULT_COMPARISON}"
-    [[ -n "${UPSTREAM_CHANGELOG}" ]] && extra_info+="
+    [[ -n "${UPSTREAM_CHANGELOG}" ]] && EXTRA_INFO+="
 Upstream commits:
 ${UPSTREAM_CHANGELOG}"
-    notify_success "${TOTAL_PASS}/${TOTAL_TESTS} across ${#VARIANTS_TO_TEST[@]} variants" "${DURATION}" "${STACK_INFO}${extra_info}"
+    notify_success "${TOTAL_PASS}/${TOTAL_TESTS} across ${#VARIANTS_TO_TEST[@]} variants" "${DURATION}" "${STACK_INFO}${EXTRA_INFO}"
 fi
 
 log_info "Results saved to ${RESULTS_DIR}"
